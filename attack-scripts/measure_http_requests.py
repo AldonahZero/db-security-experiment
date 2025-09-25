@@ -5,7 +5,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 def parse_headers(header_list: Optional[List[str]]) -> dict:
@@ -24,7 +24,7 @@ def parse_headers(header_list: Optional[List[str]]) -> dict:
 
 def send_request(
     url: str, method: str, body: Optional[str], headers: dict, timeout: float
-) -> float:
+) -> Tuple[float, Optional[int]]:
     data = None
     if body is not None:
         data = body.encode("utf-8")
@@ -33,10 +33,18 @@ def send_request(
         url, data=data, headers=headers, method=method.upper()
     )
     start = time.time()
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        # Read response to ensure full round-trip; content is discarded.
-        response.read()
-    return (time.time() - start) * 1000
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            # Read response to ensure full round-trip; content is discarded.
+            response.read()
+            status = getattr(response, "status", getattr(response, "code", None))
+    except urllib.error.HTTPError as exc:
+        try:
+            exc.read()
+        except Exception:  # pragma: no cover - best effort cleanup
+            pass
+        status = exc.code
+    return (time.time() - start) * 1000, status
 
 
 def main() -> None:
@@ -100,10 +108,18 @@ def main() -> None:
                 break
         attempts += 1
         try:
-            elapsed_ms = send_request(
+            elapsed_ms, status = send_request(
                 args.url, args.method, args.body, headers, args.timeout
             )
             successes.append(elapsed_ms)
+            if status is not None and status >= 400:
+                errors.append(
+                    {
+                        "attempt": attempts,
+                        "error": f"HTTP {status}",
+                        "note": "counted in successes despite error status",
+                    }
+                )
         except urllib.error.URLError as exc:
             errors.append({"attempt": attempts, "error": str(exc)})
         except Exception as exc:  # pylint: disable=broad-except

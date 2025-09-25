@@ -2,7 +2,6 @@
 import argparse
 import csv
 import json
-import os
 import subprocess
 import threading
 import time
@@ -12,7 +11,10 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 BASE_EXEC = ["docker", "compose", "exec", "-T", "attack-client"]
-MEASURE_SCRIPT = ["python3", "/root/attack-scripts/measure_http_requests.py"]
+MEASURE_SCRIPT_CANDIDATES = [
+    "/root/attack-scripts/measure_http_requests.py",
+    "/root/attack-scripts/attack-scripts/measure_http_requests.py",
+]
 RESULTS_DIR = Path("results")
 LOGS_DIR = RESULTS_DIR / "logs"
 CSV_PATH = RESULTS_DIR / "attack_metrics.csv"
@@ -26,14 +28,39 @@ class Attack:
     technique: str
     command: Sequence[str]
     success_parser: Callable[[int, str, str], Tuple[bool, str]]
-    cpu_container: str
-    latency_command: Optional[Sequence[str]] = None
+    cpu_service: str
+    latency_args: Optional[Sequence[str]] = None
     latency_run_during: bool = False
 
 
 def ensure_dirs() -> None:
     RESULTS_DIR.mkdir(exist_ok=True)
     LOGS_DIR.mkdir(exist_ok=True)
+
+
+def resolve_measure_script_path() -> Optional[str]:
+    for candidate in MEASURE_SCRIPT_CANDIDATES:
+        result = subprocess.run(
+            [*BASE_EXEC, "test", "-f", candidate],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return candidate
+    return None
+
+
+def resolve_container_name(service: str) -> str:
+    result = subprocess.run(
+        ["docker", "compose", "ps", "-q", service],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip().splitlines()[0]
+    return service
 
 
 def monitor_cpu(
@@ -170,22 +197,38 @@ def append_csv_row(row: Dict[str, object]) -> None:
         writer.writerow(row)
 
 
-def run_attack(config: Attack) -> Dict[str, object]:
+def run_attack(config: Attack, measure_script_path: Optional[str]) -> Dict[str, object]:
     latency_result: Optional[Dict[str, Optional[float]]] = None
     async_measure_proc: Optional[subprocess.Popen] = None
+    latency_error_override: Optional[str] = None
+
+    latency_command: Optional[List[str]] = None
+    if config.latency_args:
+        if measure_script_path:
+            latency_command = [
+                *BASE_EXEC,
+                "python3",
+                measure_script_path,
+                *config.latency_args,
+            ]
+        else:
+            latency_error_override = (
+                "Measurement script not found in attack-client container"
+            )
 
     stop_event = threading.Event()
     cpu_samples: List[float] = []
+    container_name = resolve_container_name(config.cpu_service)
     monitor_thread = threading.Thread(
         target=monitor_cpu,
-        args=(config.cpu_container, stop_event, cpu_samples),
+        args=(container_name, stop_event, cpu_samples),
         daemon=True,
     )
 
     monitor_thread.start()
 
-    if config.latency_command and config.latency_run_during:
-        async_measure_proc = run_measurement_async(config.latency_command)
+    if latency_command and config.latency_run_during:
+        async_measure_proc = run_measurement_async(latency_command)
         # slight warm-up to ensure measurement is active
         time.sleep(0.5)
 
@@ -202,8 +245,8 @@ def run_attack(config: Attack) -> Dict[str, object]:
 
     if async_measure_proc is not None:
         latency_result = collect_async_measurement(async_measure_proc)
-    elif config.latency_command is not None:
-        latency_result = run_measurement(config.latency_command)
+    elif latency_command is not None:
+        latency_result = run_measurement(latency_command)
 
     success, notes = config.success_parser(proc.returncode, stdout, stderr)
     write_logs(config.name, stdout, stderr)
@@ -224,7 +267,9 @@ def run_attack(config: Attack) -> Dict[str, object]:
         "stderr_log": str((LOGS_DIR / f"{config.name}.stderr.log").resolve()),
         "latency_raw": None if latency_result is None else latency_result.get("raw"),
         "latency_error": (
-            None if latency_result is None else latency_result.get("error")
+            latency_error_override
+            if latency_error_override
+            else (None if latency_result is None else latency_result.get("error"))
         ),
     }
 
@@ -256,10 +301,8 @@ def build_attack_plan() -> List[Attack]:
                 "--dump",
             ],
             success_parser=parse_sqlmap_success,
-            cpu_container="postgres-db",
-            latency_command=[
-                *BASE_EXEC,
-                *MEASURE_SCRIPT,
+            cpu_service="postgres-db",
+            latency_args=[
                 "--url",
                 sqlmap_union_payload,
                 "--samples",
@@ -289,10 +332,8 @@ def build_attack_plan() -> List[Attack]:
                 "--dump",
             ],
             success_parser=parse_sqlmap_success,
-            cpu_container="postgres-db",
-            latency_command=[
-                *BASE_EXEC,
-                *MEASURE_SCRIPT,
+            cpu_service="postgres-db",
+            latency_args=[
                 "--url",
                 sqlmap_time_payload,
                 "--samples",
@@ -319,10 +360,8 @@ def build_attack_plan() -> List[Attack]:
                 "--batch",
             ],
             success_parser=parse_sqlmap_success,
-            cpu_container="mongo-db",
-            latency_command=[
-                *BASE_EXEC,
-                *MEASURE_SCRIPT,
+            cpu_service="mongo-db",
+            latency_args=[
                 "--url",
                 mongo_payload,
                 "--samples",
@@ -351,10 +390,8 @@ def build_attack_plan() -> List[Attack]:
                 "-f",
             ],
             success_parser=parse_hydra_success,
-            cpu_container="postgres-db",
-            latency_command=[
-                *BASE_EXEC,
-                *MEASURE_SCRIPT,
+            cpu_service="postgres-db",
+            latency_args=[
                 "--url",
                 pg_baseline_payload,
                 "--duration",
@@ -384,10 +421,8 @@ def build_attack_plan() -> List[Attack]:
                 "-I",
             ],
             success_parser=parse_hydra_success,
-            cpu_container="postgres-db",
-            latency_command=[
-                *BASE_EXEC,
-                *MEASURE_SCRIPT,
+            cpu_service="postgres-db",
+            latency_args=[
                 "--url",
                 pg_baseline_payload,
                 "--duration",
@@ -435,6 +470,13 @@ def main() -> None:
     args = parser.parse_args()
 
     ensure_dirs()
+    measure_script_path = resolve_measure_script_path()
+    if measure_script_path:
+        print(f"[信息] 使用延迟测量脚本: {measure_script_path}")
+    else:
+        print(
+            "[警告] 未在 attack-client 容器中找到 measure_http_requests.py，延迟数据将不会被记录。"
+        )
     results: List[Dict[str, object]] = []
 
     for attack in build_attack_plan():
@@ -442,7 +484,7 @@ def main() -> None:
             print(f"跳过 {attack.name}")
             continue
         print(f"\n>>> 执行 {attack.name} ({attack.tool} / {attack.technique})")
-        result = run_attack(attack)
+        result = run_attack(attack, measure_script_path)
         result_row = {
             "timestamp": datetime.utcnow().isoformat(),
             "tool": result["tool"],
