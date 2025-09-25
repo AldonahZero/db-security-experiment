@@ -4,6 +4,9 @@ services:
     image: bkimminich/juice-shop
     ports:
       - "3001:3000" # Juice Shop UI 端口保持不变
+    cpus: "4"
+    mem_limit: 8g
+    mem_reservation: 6g
 
   postgres-db:
     image: postgres:13
@@ -13,21 +16,33 @@ services:
       POSTGRES_DB: juiceshop_db
     ports:
       - "5433:5432" # 变更: 主机端口改为5433，容器内部依然是5432
+    cpus: "4"
+    mem_limit: 8g
+    mem_reservation: 6g
 
   mongo-db:
     image: mongo:4
     ports:
       - "27018:27017" # 变更: 主机端口改为27018，容器内部依然是27017
+    cpus: "4"
+    mem_limit: 8g
+    mem_reservation: 6g
 
   # 我们的攻击和测试客户端
   attack-client:
-    image: ubuntu:20.04
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: db-security-attack-client:latest
     tty: true # 保持容器运行以便我们进入
     command: /bin/bash
     depends_on:
       - juiceshop
       - postgres-db
       - mongo-db
+    cpus: "4"
+    mem_limit: 8g
+    mem_reservation: 6g
 
 networks:
   default:

