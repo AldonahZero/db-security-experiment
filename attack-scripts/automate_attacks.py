@@ -183,7 +183,82 @@ def _parse_memory_value(value: str) -> Optional[float]:
     return number * factor
 
 
+def _sample_cpu_percent_ps(service: str) -> Optional[float]:
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "compose",
+                "exec",
+                "-T",
+                service,
+                "ps",
+                "-eo",
+                "pcpu=",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+
+    total = 0.0
+    for line in result.stdout.splitlines():
+        value = line.strip()
+        if not value:
+            continue
+        try:
+            total += float(value)
+        except ValueError:
+            continue
+    return total
+
+
+def _sample_container_memory_percent(container: str) -> Optional[float]:
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "stats",
+                container,
+                "--no-stream",
+                "--format",
+                "{{.MemUsage}}|{{.MemPerc}}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+
+    sample_line = result.stdout.strip().splitlines()[0]
+    mem_usage_part, mem_percent_part = (
+        part.strip() for part in sample_line.split("|", 1)
+    )
+    mem_percent_value = mem_percent_part.rstrip("%")
+    try:
+        return float(mem_percent_value)
+    except ValueError:
+        mem_bytes = _parse_memory_value(mem_usage_part.split("/", 1)[0])
+        mem_limit_part = (
+            mem_usage_part.split("/", 1)[1].strip() if "/" in mem_usage_part else ""
+        )
+        limit_bytes = _parse_memory_value(mem_limit_part)
+        if mem_bytes is not None and limit_bytes:
+            return (mem_bytes / limit_bytes) * 100
+    return None
+
+
 def monitor_resources(
+    service: str,
     container: str,
     stop_event: threading.Event,
     cpu_samples: List[float],
@@ -191,46 +266,14 @@ def monitor_resources(
     interval: float = 0.75,
 ) -> None:
     while not stop_event.is_set():
-        try:
-            result = subprocess.run(
-                [
-                    "docker",
-                    "stats",
-                    container,
-                    "--no-stream",
-                    "--format",
-                    "{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                sample_line = result.stdout.strip().splitlines()[0]
-                cpu_part, mem_usage_part, mem_percent_part = (
-                    part.strip() for part in sample_line.split("|", 2)
-                )
-                cpu_value = cpu_part.rstrip("%")
-                try:
-                    cpu_samples.append(float(cpu_value))
-                except ValueError:
-                    pass
-                mem_percent_value = mem_percent_part.rstrip("%")
-                try:
-                    mem_samples.append(float(mem_percent_value))
-                except ValueError:
-                    mem_bytes = _parse_memory_value(mem_usage_part.split("/", 1)[0])
-                    mem_limit_part = (
-                        mem_usage_part.split("/", 1)[1].strip()
-                        if "/" in mem_usage_part
-                        else ""
-                    )
-                    limit_bytes = _parse_memory_value(mem_limit_part)
-                    if mem_bytes is not None and limit_bytes:
-                        mem_samples.append((mem_bytes / limit_bytes) * 100)
-        except FileNotFoundError:
-            # docker CLI not present
-            break
+        cpu_percent = _sample_cpu_percent_ps(service)
+        if cpu_percent is not None:
+            cpu_samples.append(cpu_percent)
+
+        mem_percent = _sample_container_memory_percent(container)
+        if mem_percent is not None:
+            mem_samples.append(mem_percent)
+
         time.sleep(interval)
 
 
@@ -361,7 +404,7 @@ def run_attack(config: Attack, measure_script_path: Optional[str]) -> Dict[str, 
     container_name = resolve_container_name(config.cpu_service)
     monitor_thread = threading.Thread(
         target=monitor_resources,
-        args=(container_name, stop_event, cpu_samples, mem_samples),
+        args=(config.cpu_service, container_name, stop_event, cpu_samples, mem_samples),
         daemon=True,
     )
 
