@@ -28,6 +28,36 @@ services:
     mem_limit: 8g
     mem_reservation: 6g
 
+  vuln-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.vuln
+    environment:
+      FLASK_ENV: production
+    depends_on:
+      - postgres-db
+      - mongo-db
+    expose:
+      - "8081"
+    cpus: "2"
+    mem_limit: 4g
+    mem_reservation: 2g
+
+  modsecurity:
+    build:
+      context: .
+      dockerfile: Dockerfile.modsecurity
+    depends_on:
+      - vuln-api
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./results/modsecurity:/var/log/modsecurity
+      - ./results/modsecurity/nginx:/var/log/nginx
+    cpus: "2"
+    mem_limit: 4g
+    mem_reservation: 2g
+
   # 我们的攻击和测试客户端
   attack-client:
     build:
@@ -40,6 +70,14 @@ services:
       - juiceshop
       - postgres-db
       - mongo-db
+      - modsecurity
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./results/modsecurity:/var/log/modsecurity:ro
+      - ./results/suricata:/var/log/suricata
+      - ./results:/workspace/results
     cpus: "4"
     mem_limit: 8g
     mem_reservation: 6g

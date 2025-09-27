@@ -6,6 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+    software-properties-common \
     python3 \
     python3-pip \
     python3-psycopg2 \
@@ -14,9 +15,16 @@ RUN apt-get update \
     git \
     sqlmap \
     hydra \
+    tcpdump \
+    jq \
+    && add-apt-repository -y ppa:oisf/suricata-stable \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    suricata \
     && pip3 install --no-cache-dir \
     flask \
     pymongo \
+    requests \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
