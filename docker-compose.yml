@@ -58,6 +58,23 @@ services:
     mem_limit: 4g
     mem_reservation: 2g
 
+  suricata:
+    image: oisf/suricata:latest
+    command: -c /etc/suricata/suricata.yaml -i eth0
+    depends_on:
+      - vuln-api
+      - modsecurity
+    volumes:
+      - ./suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
+      - ./suricata/rules:/var/lib/suricata/rules:ro
+      - ./results/suricata:/var/log/suricata
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    cpus: "2"
+    mem_limit: 4g
+    mem_reservation: 2g
+
   # 我们的攻击和测试客户端
   attack-client:
     build:
@@ -71,6 +88,7 @@ services:
       - postgres-db
       - mongo-db
       - modsecurity
+      - suricata
     cap_add:
       - NET_ADMIN
       - NET_RAW
