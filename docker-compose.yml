@@ -58,7 +58,10 @@ services:
     mem_reservation: 2g
 
   suricata:
-    image: oisf/suricata:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.suricata
+    image: local-suricata:latest
     command: -c /etc/suricata/suricata.yaml -i eth0
     depends_on:
       - vuln-api
