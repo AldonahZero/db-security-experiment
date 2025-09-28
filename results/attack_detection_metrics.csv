@@ -29,3 +29,15 @@ ModSecurity,PROC_SQLI,存储过程调用,0,0,0.0,0,347,0.0
 Suricata,BASIC_SQLI,基础SQL注入,0,0,0.0,0,347,0.0
 Suricata,OBFUSCATED_SQLI,混淆SQL注入,0,0,0.0,0,347,0.0
 Suricata,PROC_SQLI,存储过程调用,0,0,0.0,0,347,0.0
+ModSecurity,BASIC_SQLI,基础SQL注入,0,0,0.0,0,350,0.0
+ModSecurity,OBFUSCATED_SQLI,混淆SQL注入,0,0,0.0,0,350,0.0
+ModSecurity,PROC_SQLI,存储过程调用,0,0,0.0,0,350,0.0
+Suricata,BASIC_SQLI,基础SQL注入,0,0,0.0,0,350,0.0
+Suricata,OBFUSCATED_SQLI,混淆SQL注入,0,0,0.0,0,350,0.0
+Suricata,PROC_SQLI,存储过程调用,0,0,0.0,0,350,0.0
+ModSecurity,BASIC_SQLI,基础SQL注入,0,0,0.0,262,553,32.147
+ModSecurity,OBFUSCATED_SQLI,混淆SQL注入,0,0,0.0,262,553,32.147
+ModSecurity,PROC_SQLI,存储过程调用,0,0,0.0,262,553,32.147
+Suricata,BASIC_SQLI,基础SQL注入,0,0,0.0,0,815,0.0
+Suricata,OBFUSCATED_SQLI,混淆SQL注入,0,0,0.0,0,815,0.0
+Suricata,PROC_SQLI,存储过程调用,0,0,0.0,0,815,0.0

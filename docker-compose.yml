@@ -74,7 +74,8 @@ services:
       context: .
       dockerfile: Dockerfile.suricata
     image: local-suricata:latest
-    command: [ "suricata", "-c", "/etc/suricata/suricata.yaml", "-i", "eth0" ]
+    network_mode: "host"
+    command: [ "suricata", "-c", "/etc/suricata/suricata.yaml", "-i", "any" ]
     depends_on:
       - vuln-api
       - modsecurity
