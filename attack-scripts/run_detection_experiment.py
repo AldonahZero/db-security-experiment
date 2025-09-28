@@ -2,12 +2,10 @@
 import csv
 import json
 import os
-import signal
-import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Sequence
+from typing import Dict, List, Sequence
 
 import requests
 
@@ -19,8 +17,7 @@ RESULTS_ROOT_CANDIDATES: Sequence[Path] = (
     Path("results"),
 )
 SURICATA_OUTPUT_DIR = Path("/var/log/suricata")
-TCPDUMP_INTERFACE = os.environ.get("TCPDUMP_INTERFACE", "eth0")
-PCAP_BASE_DIR = SURICATA_OUTPUT_DIR / "pcaps"
+EVE_JSON_PATH = SURICATA_OUTPUT_DIR / "eve.json"
 
 
 def resolve_results_dir() -> Path:
@@ -51,30 +48,50 @@ SCENARIOS: List[Scenario] = [
     Scenario(
         name="basic_sql_injection",
         display="基础SQL注入",
-        malicious_payloads=["1 OR 1=1", "1 OR '1'='1'"],
-        benign_payloads=["1", "2", "3"],
-        suricata_sid=1000001,
+        malicious_payloads=[
+            "1 OR 1=1",
+            "1 OR '1'='1'",
+            "1 or 2>1 --",
+            "1' OR 'a'='a'",
+            '1" OR "1"="1',
+            "1 OR true",
+        ],
+        benign_payloads=["1", "2", "3", "4", "5", "42"],
+        suricata_sid=100001,
     ),
     Scenario(
         name="obfuscated_sql_injection",
         display="混淆SQL注入",
-        malicious_payloads=["1/**/OR/**/1=1", "1/*foo*/OR/*bar*/1=1"],
-        benign_payloads=["1", "4", "7"],
-        suricata_sid=1000002,
+        malicious_payloads=[
+            "1/**/OR/**/1=1",
+            "1/*foo*/OR/*bar*/1=1",
+            "1%09OR%091=1",
+            "1/**/oR/**/'1'='1'",
+            "1/**/OR/**/2>1--",
+            "1/*bypass*/OR/*comment*/1 LIKE 1",
+        ],
+        benign_payloads=["1", "4", "7", "8", "9", "10"],
+        suricata_sid=100002,
     ),
     Scenario(
         name="stored_procedure",
         display="存储过程调用",
-        malicious_payloads=["1; CALL pg_sleep(0.1); --", "1; EXECUTE pg_sleep(0.1);"],
-        benign_payloads=["5", "6", "8"],
-        suricata_sid=1000003,
+        malicious_payloads=[
+            "1; CALL pg_sleep(0.1); --",
+            "1; EXECUTE pg_sleep(0.1);",
+            "1; SELECT pg_sleep(0.1); --",
+            "1; PERFORM pg_sleep(0.1); --",
+            "1; DO $$BEGIN PERFORM pg_sleep(0.1); END$$; --",
+            "1'; SELECT pg_sleep(0.1); --",
+        ],
+        benign_payloads=["5", "6", "8", "11", "12", "13"],
+        suricata_sid=100003,
     ),
 ]
 
 
 def ensure_directories() -> None:
     SURICATA_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    PCAP_BASE_DIR.mkdir(parents=True, exist_ok=True)
     (RESULTS_DIR / "detection_logs").mkdir(parents=True, exist_ok=True)
 
 
@@ -95,54 +112,6 @@ def modsecurity_detected(response: requests.Response) -> bool:
     if "modsecurity" in response.text.lower():
         return True
     return False
-
-
-def run_tcpdump_capture(pcap_path: Path, action: Callable[[], None]) -> None:
-    command = [
-        "tcpdump",
-        "-i",
-        TCPDUMP_INTERFACE,
-        "tcp",
-        "port",
-        "8080",
-        "-w",
-        str(pcap_path),
-    ]
-    log_info(f"启动 tcpdump 捕获 {pcap_path.name}")
-    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    time.sleep(0.5)
-    try:
-        action()
-    finally:
-        proc.send_signal(signal.SIGINT)
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.terminate()
-            proc.wait(timeout=5)
-        log_info("tcpdump 捕获已停止")
-
-
-def run_suricata(pcap_path: Path, output_dir: Path) -> Path:
-    if output_dir.exists():
-        for child in output_dir.iterdir():
-            if child.is_file():
-                child.unlink()
-            else:
-                subprocess.run(["rm", "-rf", str(child)], check=False)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    command = [
-        "suricata",
-        "-S",
-        str(SURICATA_RULES),
-        "-r",
-        str(pcap_path),
-        "-l",
-        str(output_dir),
-    ]
-    log_info(f"运行 Suricata 分析 {pcap_path.name}")
-    subprocess.run(command, check=False)
-    return output_dir / "eve.json"
 
 
 def parse_suricata_alerts(eve_path: Path, sid: int) -> int:
@@ -199,10 +168,14 @@ def evaluate_modsecurity(scenario: Scenario) -> Dict[str, float]:
 
 
 def evaluate_suricata(scenario: Scenario) -> Dict[str, float]:
-    malicious_pcap = PCAP_BASE_DIR / f"{scenario.name}_malicious.pcap"
-    benign_pcap = PCAP_BASE_DIR / f"{scenario.name}_benign.pcap"
-    malicious_out = SURICATA_OUTPUT_DIR / f"{scenario.name}_malicious"
-    benign_out = SURICATA_OUTPUT_DIR / f"{scenario.name}_benign"
+    eve_path = EVE_JSON_PATH
+
+    def wait_for_eve(path: Path, attempts: int = 10, delay: float = 0.5) -> None:
+        for _ in range(attempts):
+            if path.exists():
+                return
+            time.sleep(delay)
+        path.touch(exist_ok=True)
 
     def send_payloads(payloads: List[str]) -> None:
         for payload in payloads:
@@ -212,14 +185,18 @@ def evaluate_suricata(scenario: Scenario) -> Dict[str, float]:
                 log_info(f"请求 {payload!r} 失败: {exc}")
             time.sleep(0.2)
 
-    run_tcpdump_capture(malicious_pcap, lambda: send_payloads(scenario.malicious_payloads))
-    run_tcpdump_capture(benign_pcap, lambda: send_payloads(scenario.benign_payloads))
+    wait_for_eve(eve_path)
+    baseline = parse_suricata_alerts(eve_path, scenario.suricata_sid)
 
-    malicious_eve = run_suricata(malicious_pcap, malicious_out)
-    benign_eve = run_suricata(benign_pcap, benign_out)
+    send_payloads(scenario.malicious_payloads)
+    time.sleep(1.0)
+    after_malicious = parse_suricata_alerts(eve_path, scenario.suricata_sid)
+    malicious_alerts = max(after_malicious - baseline, 0)
 
-    malicious_alerts = parse_suricata_alerts(malicious_eve, scenario.suricata_sid)
-    benign_alerts = parse_suricata_alerts(benign_eve, scenario.suricata_sid)
+    send_payloads(scenario.benign_payloads)
+    time.sleep(1.0)
+    after_benign = parse_suricata_alerts(eve_path, scenario.suricata_sid)
+    benign_alerts = max(after_benign - after_malicious, 0)
 
     total_malicious = len(scenario.malicious_payloads)
     total_benign = len(scenario.benign_payloads)

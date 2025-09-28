@@ -1,3 +1,3 @@
-alert http any any -> any any (msg:"SQLi Basic pattern UNION SELECT"; http.uri; content:"UNION"; nocase; http.uri; content:"SELECT"; nocase; distance:0; within:20; classtype:web-application-attack; sid:100001; rev:2;)
-alert http any any -> any any (msg:"SQLi Obfuscated pattern with comments"; http.uri; pcre:"/S(\/\*.*?\*\/)?E(\/\*.*?\*\/)?L(\/\*.*?\*\/)?E(\/\*.*?\*\/)?C(\/\*.*?\*\/)?T/i"; classtype:web-application-attack; sid:100002; rev:2;)
+alert http any any -> any any (msg:"SQLi Basic pattern OR equality"; http.uri; pcre:"/\\bOR\\b\\s*(?:1=1|['\"]1['\"]=['\"]1['\"])/i"; classtype:web-application-attack; sid:100001; rev:3;)
+alert http any any -> any any (msg:"SQLi Obfuscated pattern OR equality"; http.uri; pcre:"/\\bOR\\b(?:\\s|\/\\*.*?\\*\/)+['\"]?1['\"]?(?:\\s|\/\\*.*?\\*\/)*=(?:\\s|\/\\*.*?\\*\/)*['\"]?1['\"]?/i"; classtype:web-application-attack; sid:100002; rev:3;)
 alert http any any -> any any (msg:"SQLi Stored procedure sleep call"; http.uri; content:"pg_sleep"; nocase; classtype:web-application-attack; sid:100003; rev:2;)

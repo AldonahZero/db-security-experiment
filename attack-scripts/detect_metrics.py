@@ -123,17 +123,19 @@ def suricata_is_sqli_alert(event: dict) -> bool:
 
 
 def compute_metrics(
-    detections: Dict[str, Dict[str, int]], benign: Dict[str, int]
+    detections: Dict[str, Dict[str, int]],
+    attack_totals: Dict[str, Dict[str, int]],
+    benign_stats: Dict[str, Dict[str, int]],
 ) -> List[Dict[str, object]]:
     rows: List[Dict[str, object]] = []
     for tool in TOOLS:
         for key, cname in SCENARIOS.items():
             tp = detections.get(tool, {}).get(key, 0)
-            total_attacks = detections.get("_counts", {}).get(key, 0)
+            total_attacks = attack_totals.get(tool, {}).get(key, 0)
             fn = max(total_attacks - tp, 0)
-            # For FPR, benign false positive is detections of SQLi when no attack id present
-            fp = benign.get(tool, 0)
-            tn = max(benign.get("_total", 0) - fp, 0)
+            tool_benign = benign_stats.get(tool, {"total": 0, "alerts": 0})
+            fp = tool_benign.get("alerts", 0)
+            tn = max(tool_benign.get("total", 0) - fp, 0)
             tpr = (tp / total_attacks * 100) if total_attacks else 0.0
             fpr = (fp / (fp + tn) * 100) if (fp + tn) else 0.0
             rows.append(
@@ -172,36 +174,41 @@ def main() -> None:
     modsec_entries = load_modsec_transactions(Path(args.modsec))
     suricata_events = load_suricata_events(Path(args.suricata))
 
-    detections: Dict[str, Dict[str, int]] = {"_counts": {k: 0 for k in SCENARIOS}}
-    benign: Dict[str, int] = {"_total": 0, "ModSecurity": 0, "Suricata": 0}
+    detections: Dict[str, Dict[str, int]] = {}
+    attack_totals: Dict[str, Dict[str, int]] = {}
+    benign_stats: Dict[str, Dict[str, int]] = {}
 
     # Process ModSecurity
     for entry in modsec_entries:
         attack_id = extract_attack_id_from_modsec(entry)
         if attack_id and attack_id in SCENARIOS:
-            detections["_counts"][attack_id] += 1
+            attack_totals.setdefault("ModSecurity", {}).setdefault(attack_id, 0)
+            attack_totals["ModSecurity"][attack_id] += 1
             if modsec_is_sqli_alert(entry):
                 detections.setdefault("ModSecurity", {}).setdefault(attack_id, 0)
                 detections["ModSecurity"][attack_id] += 1
         else:
-            benign["_total"] += 1
+            stats = benign_stats.setdefault("ModSecurity", {"total": 0, "alerts": 0})
+            stats["total"] += 1
             if modsec_is_sqli_alert(entry):
-                benign["ModSecurity"] += 1
+                stats["alerts"] += 1
 
     # Process Suricata
     for ev in suricata_events:
         attack_id = extract_attack_id_from_suricata(ev)
         if attack_id and attack_id in SCENARIOS:
-            detections["_counts"][attack_id] += 1
+            attack_totals.setdefault("Suricata", {}).setdefault(attack_id, 0)
+            attack_totals["Suricata"][attack_id] += 1
             if suricata_is_sqli_alert(ev):
                 detections.setdefault("Suricata", {}).setdefault(attack_id, 0)
                 detections["Suricata"][attack_id] += 1
         else:
-            benign["_total"] += 1
+            stats = benign_stats.setdefault("Suricata", {"total": 0, "alerts": 0})
+            stats["total"] += 1
             if suricata_is_sqli_alert(ev):
-                benign["Suricata"] += 1
+                stats["alerts"] += 1
 
-    rows = compute_metrics(detections, benign)
+    rows = compute_metrics(detections, attack_totals, benign_stats)
     write_csv(rows)
     print("工具,场景,TP,FP,TPR%,FPR%")
     for r in rows:
