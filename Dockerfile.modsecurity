@@ -1,21 +1,6 @@
-FROM ubuntu:20.04
+FROM owasp/modsecurity-crs:nginx
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=Etc/UTC
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-    nginx \
-    libnginx-mod-security \
-    modsecurity-crs \
-    ca-certificates \
-    && cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf \
-    && cp /usr/share/modsecurity-crs/crs-setup.conf.example /etc/modsecurity/crs-setup.conf \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/' /etc/modsecurity/modsecurity.conf
-
+# 覆盖默认配置以指向我们的后端 vuln-api 服务
 COPY modsecurity/include.conf /etc/nginx/modsecurity.d/include.conf
 COPY modsecurity/custom-rules.conf /etc/nginx/modsecurity.d/custom-rules.conf
 COPY modsecurity/default.conf /etc/nginx/conf.d/default.conf

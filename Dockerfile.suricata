@@ -7,9 +7,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.aliyun.com/ubuntu/|g' /etc/apt/sources.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        suricata \
-        ca-certificates \
-        jq \
+    suricata \
+    ca-certificates \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # 保证日志目录存在，即使挂载卷也不会报错
