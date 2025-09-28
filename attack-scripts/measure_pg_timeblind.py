@@ -1,8 +1,10 @@
+import os
 import time
 import urllib.parse
 import urllib.request
 
-URL = "http://127.0.0.1:8081/pg/users"
+BASE_URL = os.environ.get("ATTACK_HTTP_BASE", "http://modsecurity:8080").rstrip("/")
+URL = f"{BASE_URL}/pg/users"
 PAYLOAD = "1 AND 9999=(SELECT 9999 FROM PG_SLEEP(1.5))"
 SAMPLES = 5
 DELAY_BETWEEN = 0.5

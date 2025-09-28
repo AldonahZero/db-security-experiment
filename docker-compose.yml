@@ -44,9 +44,11 @@ services:
 
   modsecurity:
     build:
-      # context: ./modsecurity
       context: .
       dockerfile: Dockerfile.modsecurity
+    image: local-modsecurity:latest
+    container_name: modsecurity_waf
+    restart: always
     depends_on:
       - vuln-api
     ports:
@@ -54,6 +56,15 @@ services:
     volumes:
       - ./results/modsecurity:/var/log/modsecurity
       - ./results/modsecurity/nginx:/var/log/nginx
+    environment:
+      # 这是关键：通过环境变量告诉启动脚本，后端的地址是什么
+      - BACKEND=http://vuln-api:8081
+      # 这是新增的关键一行：告诉启动脚本在Nginx配置中加入resolver指令
+      - RESOLVER=127.0.0.11
+      # 告诉Nginx在找不到后端时不退出
+      - PROXY_UPSTREAM_CHECK=false
+      # 可以在这里设置其他ModSecurity变量，例如日志级别
+      - LOG_LEVEL=info
     cpus: "2"
     mem_limit: 4g
     mem_reservation: 2g
@@ -63,7 +74,7 @@ services:
       context: .
       dockerfile: Dockerfile.suricata
     image: local-suricata:latest
-    command: -c /etc/suricata/suricata.yaml -i eth0
+    command: [ "suricata", "-c", "/etc/suricata/suricata.yaml", "-i", "eth0" ]
     depends_on:
       - vuln-api
       - modsecurity

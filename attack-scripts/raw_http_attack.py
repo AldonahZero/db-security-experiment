@@ -34,8 +34,11 @@ def main() -> None:
         sys.exit(2)
 
     key, value = args.param.split("=", 1)
-    # 不对 value 做 urlencode 以便保留注入结构，只对 key 编码
-    q = f"{urllib.parse.quote_plus(key)}={value}"
+
+    # 对 value 进行最小化编码，保留 SQL 注入所需的结构但移除非法控制字符
+    safe_chars = "*'-._~:/?&=,()%+"
+    encoded_value = urllib.parse.quote(value, safe=safe_chars)
+    q = f"{urllib.parse.quote_plus(key)}={encoded_value}"
     full_url = f"{args.url}?{q}"
 
     req = urllib.request.Request(full_url, headers={"X-Attack-ID": args.attack_id})
