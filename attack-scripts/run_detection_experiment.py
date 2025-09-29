@@ -34,7 +34,9 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 DETECTION_CSV = RESULTS_DIR / "detection_metrics.csv"
 MODSECURITY_AUDIT_LOG = Path("/var/log/modsecurity/audit.log")
 
-DEFAULT_MALICIOUS_COUNT = max(100, int(os.environ.get("MALICIOUS_PAYLOAD_COUNT", "150")))
+DEFAULT_MALICIOUS_COUNT = max(
+    100, int(os.environ.get("MALICIOUS_PAYLOAD_COUNT", "150"))
+)
 DEFAULT_BENIGN_COUNT = max(100, int(os.environ.get("BENIGN_PAYLOAD_COUNT", "150")))
 
 
@@ -242,14 +244,18 @@ SCENARIOS: List[Scenario] = [
     Scenario(
         name="basic_sql_injection",
         display="基础SQL注入",
-        malicious_payloads=generate_basic_sql_injection_payloads(DEFAULT_MALICIOUS_COUNT),
+        malicious_payloads=generate_basic_sql_injection_payloads(
+            DEFAULT_MALICIOUS_COUNT
+        ),
         benign_payloads=generate_numeric_payloads(DEFAULT_BENIGN_COUNT, start=1),
         suricata_sid=100001,
     ),
     Scenario(
         name="obfuscated_sql_injection",
         display="混淆SQL注入",
-        malicious_payloads=generate_obfuscated_sql_injection_payloads(DEFAULT_MALICIOUS_COUNT),
+        malicious_payloads=generate_obfuscated_sql_injection_payloads(
+            DEFAULT_MALICIOUS_COUNT
+        ),
         benign_payloads=generate_numeric_payloads(DEFAULT_BENIGN_COUNT, start=2000),
         suricata_sid=100002,
     ),
@@ -272,7 +278,9 @@ def log_info(message: str) -> None:
     print(f"[INFO] {message}")
 
 
-def send_request(param_value: str, headers: Optional[Dict[str, str]] = None) -> requests.Response:
+def send_request(
+    param_value: str, headers: Optional[Dict[str, str]] = None
+) -> requests.Response:
     url = f"{BASE_URL}/pg/users"
     params = {"id": param_value}
     response = requests.get(url, params=params, headers=headers, timeout=10)
