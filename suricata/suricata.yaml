@@ -22,7 +22,14 @@ outputs:
       filename: eve.json
       types:
         - alert
-        - http
+        - http:
+            extended: yes
+            request-body: yes
+            response-body: no
+            request-headers:
+              - Host
+              - User-Agent
+              - X-Bypass-WAF
         - dns
         - tls
         - flow

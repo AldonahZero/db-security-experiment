@@ -5,7 +5,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence
 
 import requests
 
@@ -34,6 +34,200 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 DETECTION_CSV = RESULTS_DIR / "detection_metrics.csv"
 MODSECURITY_AUDIT_LOG = Path("/var/log/modsecurity/audit.log")
 
+DEFAULT_MALICIOUS_COUNT = max(100, int(os.environ.get("MALICIOUS_PAYLOAD_COUNT", "150")))
+DEFAULT_BENIGN_COUNT = max(100, int(os.environ.get("BENIGN_PAYLOAD_COUNT", "150")))
+
+
+def _take_unique(values: Iterable[str], count: int) -> List[str]:
+    seen = set()
+    result: List[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+        if len(result) >= count:
+            break
+    if len(result) < count:
+        raise ValueError(f"无法生成 {count} 条唯一 payload，仅得到 {len(result)} 条")
+    return result
+
+
+def generate_basic_sql_injection_payloads(count: int) -> List[str]:
+    left_values = [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "21",
+        "42",
+    ]
+    connectors = [
+        " OR ",
+        " or ",
+        " Or ",
+        " oR ",
+        " OR  ",
+        "  OR ",
+        " OR\t",
+        "\tOR ",
+        " OR/**/",
+        "/**/OR ",
+        " OR/*basic*/",
+        "/*!OR*/",
+    ]
+    comparators = [
+        "1=1",
+        "(1=1)",
+        "1=1--",
+        "1=1 --",
+        "1=1#",
+        "1=1/*keep*/",
+        "1=1/**/",
+        "1=1/**/AND/**/2=2",
+        "1=1 AND 2=2",
+        "1=1 OR 2=2",
+        "(1=1 AND 2=2)",
+        "1=1 UNION SELECT 1",
+    ]
+    suffixes = [
+        "",
+        " --",
+        " #",
+        " /*basic*/",
+        " --+",
+        " --test",
+    ]
+    payloads = (
+        f"{left}{connector}{comparator}{suffix}"
+        for left in left_values
+        for connector in connectors
+        for comparator in comparators
+        for suffix in suffixes
+    )
+    return _take_unique(payloads, count)
+
+
+def generate_obfuscated_sql_injection_payloads(count: int) -> List[str]:
+    left_values = [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "21",
+        "42",
+    ]
+    connectors = [
+        "/**/OR/**/",
+        "/*foo*/OR/*bar*/",
+        " OR/*obf*/ ",
+        " /*!OR*/ ",
+        " OR/**/",
+        "/**/OR ",
+        " OR\t",
+        "\tor\t",
+        " OR\\u0020",
+        " OR\f",
+        " OR\v",
+        " OR\u00a0",
+    ]
+    comparators = [
+        "'1'='1'",
+        "('1'='1')",
+        "'1'='1'--",
+        "'1'='1' /*string*/",
+        "'1'='1'#",
+        "'1'='1'/**/",
+        "'1'='1'/**/AND/**/'2'='2'",
+        "'1'='1' OR '2'='2'",
+        "('1'='1' AND '2'='2')",
+        "'1'='1' UNION SELECT '1'",
+        "'1'='1'/*obf*/",
+        "'1'='1'/*!50000*/",
+    ]
+    suffixes = [
+        "",
+        " --",
+        " #",
+        " /*obf*/",
+        " --+",
+        " --test",
+    ]
+    payloads = (
+        f"{left}{connector}{comparator}{suffix}"
+        for left in left_values
+        for connector in connectors
+        for comparator in comparators
+        for suffix in suffixes
+    )
+    return _take_unique(payloads, count)
+
+
+def generate_stored_procedure_payloads(count: int) -> List[str]:
+    prefixes = [
+        "1; ",
+        "0; ",
+        "2; ",
+        "3; ",
+        "4; ",
+        "5; ",
+        "-1; ",
+        "'1'; ",
+        '"1"; ',
+        "1) ; ",
+        "1'); ",
+        '"1" ); ',
+    ]
+    templates = [
+        "CALL pg_sleep({duration})",
+        "SELECT pg_sleep({duration})",
+        "PERFORM pg_sleep({duration})",
+        "EXECUTE pg_sleep({duration})",
+        "DO $$BEGIN PERFORM pg_sleep({duration}); END$$",
+        "DO $$ BEGIN PERFORM pg_sleep({duration}); END $$",
+    ]
+    suffixes = [
+        "; --",
+        "; -- delay",
+        "; /*sleep*/",
+        "; #",
+        "; --test",
+        "; -- pause",
+    ]
+    durations = [f"{value/10:.1f}" for value in range(1, 401)]
+    payloads = (
+        f"{prefix}{template.format(duration=duration)}{suffix}"
+        for prefix in prefixes
+        for template in templates
+        for duration in durations
+        for suffix in suffixes
+    )
+    return _take_unique(payloads, count)
+
+
+def generate_numeric_payloads(count: int, start: int = 1) -> List[str]:
+    return [str(start + index) for index in range(count)]
+
 
 @dataclass
 class Scenario:
@@ -48,43 +242,22 @@ SCENARIOS: List[Scenario] = [
     Scenario(
         name="basic_sql_injection",
         display="基础SQL注入",
-        malicious_payloads=[
-            "1 OR 1=1",
-            "1 OR '1'='1'",
-            "1 or 2>1 --",
-            "1' OR 'a'='a'",
-            '1" OR "1"="1',
-            "1 OR true",
-        ],
-        benign_payloads=["1", "2", "3", "4", "5", "42"],
+        malicious_payloads=generate_basic_sql_injection_payloads(DEFAULT_MALICIOUS_COUNT),
+        benign_payloads=generate_numeric_payloads(DEFAULT_BENIGN_COUNT, start=1),
         suricata_sid=100001,
     ),
     Scenario(
         name="obfuscated_sql_injection",
         display="混淆SQL注入",
-        malicious_payloads=[
-            "1/**/OR/**/1=1",
-            "1/*foo*/OR/*bar*/1=1",
-            "1%09OR%091=1",
-            "1/**/oR/**/'1'='1'",
-            "1/**/OR/**/2>1--",
-            "1/*bypass*/OR/*comment*/1 LIKE 1",
-        ],
-        benign_payloads=["1", "4", "7", "8", "9", "10"],
+        malicious_payloads=generate_obfuscated_sql_injection_payloads(DEFAULT_MALICIOUS_COUNT),
+        benign_payloads=generate_numeric_payloads(DEFAULT_BENIGN_COUNT, start=2000),
         suricata_sid=100002,
     ),
     Scenario(
         name="stored_procedure",
         display="存储过程调用",
-        malicious_payloads=[
-            "1; CALL pg_sleep(0.1); --",
-            "1; EXECUTE pg_sleep(0.1);",
-            "1; SELECT pg_sleep(0.1); --",
-            "1; PERFORM pg_sleep(0.1); --",
-            "1; DO $$BEGIN PERFORM pg_sleep(0.1); END$$; --",
-            "1'; SELECT pg_sleep(0.1); --",
-        ],
-        benign_payloads=["5", "6", "8", "11", "12", "13"],
+        malicious_payloads=generate_stored_procedure_payloads(DEFAULT_MALICIOUS_COUNT),
+        benign_payloads=generate_numeric_payloads(DEFAULT_BENIGN_COUNT, start=4000),
         suricata_sid=100003,
     ),
 ]
@@ -99,10 +272,10 @@ def log_info(message: str) -> None:
     print(f"[INFO] {message}")
 
 
-def send_request(param_value: str) -> requests.Response:
+def send_request(param_value: str, headers: Optional[Dict[str, str]] = None) -> requests.Response:
     url = f"{BASE_URL}/pg/users"
     params = {"id": param_value}
-    response = requests.get(url, params=params, timeout=10)
+    response = requests.get(url, params=params, headers=headers, timeout=10)
     return response
 
 
@@ -177,10 +350,12 @@ def evaluate_suricata(scenario: Scenario) -> Dict[str, float]:
             time.sleep(delay)
         path.touch(exist_ok=True)
 
+    bypass_headers = {"X-Bypass-WAF": "1"}
+
     def send_payloads(payloads: List[str]) -> None:
         for payload in payloads:
             try:
-                send_request(payload)
+                send_request(payload, headers=bypass_headers)
             except requests.RequestException as exc:
                 log_info(f"请求 {payload!r} 失败: {exc}")
             time.sleep(0.2)
@@ -200,7 +375,11 @@ def evaluate_suricata(scenario: Scenario) -> Dict[str, float]:
 
     total_malicious = len(scenario.malicious_payloads)
     total_benign = len(scenario.benign_payloads)
-    tpr = min(malicious_alerts, total_malicious) / total_malicious * 100 if total_malicious else 0.0
+    tpr = (
+        min(malicious_alerts, total_malicious) / total_malicious * 100
+        if total_malicious
+        else 0.0
+    )
     fpr = min(benign_alerts, total_benign) / total_benign * 100 if total_benign else 0.0
     return {
         "tpr": round(tpr, 1),
