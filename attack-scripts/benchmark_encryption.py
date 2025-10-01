@@ -309,12 +309,16 @@ def measure_environment(env):
         time.sleep(0.5)  # 等待采样器启动并开始收集数据
         try:
             if op["fn"] == "benchmark_read_by_id":
-                latencies = run_benchmark(env, op["fn"], ids_cache, clear_cache=is_first_op)
+                latencies = run_benchmark(
+                    env, op["fn"], ids_cache, clear_cache=is_first_op
+                )
                 if latencies and ids_cache is None:
                     with get_connection(env["dsn"]) as conn:
                         ids_cache = collect_ids(conn)
             else:
-                latencies = run_benchmark(env, op["fn"], ids_cache, clear_cache=is_first_op)
+                latencies = run_benchmark(
+                    env, op["fn"], ids_cache, clear_cache=is_first_op
+                )
             is_first_op = False  # 只在第一个操作时清空表
         except Exception as exc:  # pylint: disable=broad-except
             sampler.stop()
