@@ -30,3 +30,15 @@ _生成时间: 2025-09-29T12:47:26+00:00 UTC_
 - 存储过程调用: 利用 pg_sleep() 进行时间延迟侧信道。
 - TPR=True Positive Rate, FPR=False Positive Rate。
 - 本轮测试每类场景共生成 150 条恶意与 150 条正常请求。Suricata 在基础与混淆场景中对每个恶意请求均触发了双重告警 (共 300 条)，仍然计算为 150 个有效告警。
+
+## 数据加密代理性能
+| 工具 | 数据库 | 操作类型 | 加密类型 | Baseline延迟 (ms) | 加密后延迟 (ms) | 延迟开销 (%) | CPU开销 (%) |
+| ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
+| Acra | PostgreSQL | 写入 | 标准 | 5.34 | 7.83 | 46.48 | -17.18 |
+| Acra | PostgreSQL | 读取 | 标准 | 2.05 | 2.63 | 28.16 | — |
+| Acra | PostgreSQL | 读取 | 可搜索 | 1.89 | 3.61 | 90.44 | — |
+| CipherStash | PostgreSQL | 写入 | 标准 | 5.34 | — | — | — |
+| CipherStash | PostgreSQL | 读取 | 标准 | 2.05 | — | — | — |
+| CipherStash | PostgreSQL | 读取 | 可搜索 | 1.89 | — | — | — |
+
+> 运行 `python attack-scripts/benchmark_encryption.py` 自动生成上述指标，并在 `results/encryption_benchmark.csv`、`results/encryption_benchmark.md` 中输出详情。CipherStash 代理仍缺少 Workspace ID 与 Client Access Key，需补齐后方可完成基准测试。

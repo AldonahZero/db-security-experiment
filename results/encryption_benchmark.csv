@@ -1,0 +1,7 @@
+工具,数据库,操作类型,加密类型,Baseline延迟 (ms),加密后延迟 (ms),延迟开销 (%),CPU开销 (%)
+Acra,PostgreSQL,写入,标准,5.33,5.77,8.24,29.07
+Acra,PostgreSQL,读取,标准,1.68,2.29,36.57,
+Acra,PostgreSQL,读取,可搜索,1.57,3.29,109.49,
+CipherStash,PostgreSQL,写入,标准,5.33,,,
+CipherStash,PostgreSQL,读取,标准,1.68,,,
+CipherStash,PostgreSQL,读取,可搜索,1.57,,,

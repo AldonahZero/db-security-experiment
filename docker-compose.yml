@@ -3,7 +3,7 @@ services:
     image: bkimminich/juice-shop
     ports:
       - "3001:3000" # Juice Shop UI 端口保持不变
-    cpus: "4"
+    cpus: 4
     mem_limit: 8g
     mem_reservation: 6g
 
@@ -15,7 +15,7 @@ services:
       POSTGRES_DB: juiceshop_db
     ports:
       - "5433:5432" # 变更: 主机端口改为5433，容器内部依然是5432
-    cpus: "4"
+    cpus: 4
     mem_limit: 8g
     mem_reservation: 6g
 
@@ -23,9 +23,92 @@ services:
     image: mongo:4
     ports:
       - "27018:27017" # 变更: 主机端口改为27018，容器内部依然是27017
-    cpus: "4"
+    cpus: 4
     mem_limit: 8g
     mem_reservation: 6g
+
+  postgres-acra:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: acrauser
+      POSTGRES_PASSWORD: acra_password123
+      POSTGRES_DB: acra_db
+    ports:
+      - "5434:5432"
+    cpus: 4
+    mem_limit: 8g
+    mem_reservation: 6g
+    volumes:
+      - postgres_acra_data:/var/lib/postgresql/data
+
+  acra-keymaker:
+    image: cossacklabs/acra-keymaker:0.94.0
+    environment:
+      ACRA_MASTER_KEY: MDEyMzQ1Njc4OUFCQ0RFRjAxMjM0NTY3ODlBQkNERUY=
+    command:
+      - "--client_id=attack-client"
+      - "--keys_output_dir=/keys"
+      - "--generate_acrastruct_storage_key"
+    depends_on:
+      - postgres-acra
+    volumes:
+      - ./acra_keys:/keys
+    restart: "no"
+
+  acra-server:
+    image: cossacklabs/acra-server:0.94.0
+    environment:
+      ACRA_MASTER_KEY: MDEyMzQ1Njc4OUFCQ0RFRjAxMjM0NTY3ODlBQkNERUY=
+    depends_on:
+      - postgres-acra
+      - acra-keymaker
+    ports:
+      - "9393:9393"
+    command:
+      - "--keys_dir=/keys"
+      - "--db_host=postgres-acra"
+      - "--db_port=5432"
+      - "--incoming_connection_host=0.0.0.0"
+      - "--incoming_connection_port=9393"
+      - "--client_id=attack-client"
+    volumes:
+      - ./acra_keys:/keys:ro
+    cpus: 2
+    mem_limit: 4g
+    mem_reservation: 2g
+
+  postgres-cipherstash:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: cipherstash
+      POSTGRES_PASSWORD: cipherstashpass
+      POSTGRES_DB: cipherstash_db
+    ports:
+      - "5435:5432"
+    cpus: 4
+    mem_limit: 8g
+    mem_reservation: 6g
+    volumes:
+      - postgres_cipherstash_data:/var/lib/postgresql/data
+
+  cipherstash-proxy:
+    image: cipherstash/proxy:latest
+    environment:
+      CS_PROXY__BIND_ADDR: 0.0.0.0:7432
+      CS_PROXY__ENABLE_TLS: "false"
+      CS_DATABASE__HOST: postgres-cipherstash
+      CS_DATABASE__PORT: "5432"
+      CS_DATABASE__USERNAME: cipherstash
+      CS_DATABASE__PASSWORD: cipherstashpass
+      CS_DATABASE__NAME: cipherstash_db
+      CS_DATABASE__INSTALL_EXAMPLE_SCHEMA: "true"
+    depends_on:
+      - postgres-cipherstash
+    ports:
+      - "7432:7432"
+    cpus: 2
+    mem_limit: 4g
+    mem_reservation: 2g
 
   vuln-api:
     build:
@@ -38,7 +121,7 @@ services:
       - mongo-db
     expose:
       - "8081"
-    cpus: "2"
+    cpus: 2
     mem_limit: 4g
     mem_reservation: 2g
 
@@ -65,7 +148,7 @@ services:
       - PROXY_UPSTREAM_CHECK=false
       # 可以在这里设置其他ModSecurity变量，例如日志级别
       - LOG_LEVEL=info
-    cpus: "2"
+    cpus: 2
     mem_limit: 4g
     mem_reservation: 2g
 
@@ -86,7 +169,7 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    cpus: "2"
+    cpus: 2
     mem_limit: 4g
     mem_reservation: 2g
 
@@ -111,10 +194,15 @@ services:
       - ./results/modsecurity:/var/log/modsecurity:ro
       - ./results/suricata:/var/log/suricata
       - ./results:/workspace/results
-    cpus: "4"
+      - ./acra_keys:/workspace/acra_keys:ro
+    cpus: 4
     mem_limit: 8g
     mem_reservation: 6g
 
 networks:
   default:
     driver: bridge
+
+volumes:
+  postgres_acra_data:
+  postgres_cipherstash_data:
