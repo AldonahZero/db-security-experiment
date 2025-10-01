@@ -94,18 +94,18 @@ services:
   cipherstash-proxy:
     image: cipherstash/proxy:latest
     environment:
-      CS_PROXY__BIND_ADDR: 0.0.0.0:7432
-      CS_PROXY__ENABLE_TLS: "false"
       CS_DATABASE__HOST: postgres-cipherstash
       CS_DATABASE__PORT: "5432"
       CS_DATABASE__USERNAME: cipherstash
       CS_DATABASE__PASSWORD: cipherstashpass
       CS_DATABASE__NAME: cipherstash_db
       CS_DATABASE__INSTALL_EXAMPLE_SCHEMA: "true"
+    volumes:
+      - ./cipherstash-proxy.toml:/cipherstash-proxy.toml:ro
     depends_on:
       - postgres-cipherstash
     ports:
-      - "7432:7432"
+      - "7432:6432"
     cpus: 2
     mem_limit: 4g
     mem_reservation: 2g

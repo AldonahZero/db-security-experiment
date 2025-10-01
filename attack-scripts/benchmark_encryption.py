@@ -98,7 +98,7 @@ def ensure_dataset(conn, target_rows: int = READ_SAMPLE_SET) -> int:
             log(f"Seeding {needed} rows")
             prefixes = SEARCH_PREFIXES
             for _ in range(needed):
-                name = "user_" + ''.join(random.choices(string.ascii_lowercase, k=8))
+                name = "user_" + "".join(random.choices(string.ascii_lowercase, k=8))
                 email = name + "@example.com"
                 prefix = random.choice(prefixes)
                 searchable = f"{prefix}-{random.randint(1000,9999)}"
@@ -112,7 +112,9 @@ def ensure_dataset(conn, target_rows: int = READ_SAMPLE_SET) -> int:
 
 def collect_ids(conn, sample_size: int = 500):
     with conn.cursor() as cur:
-        cur.execute("SELECT id FROM benchmark_data ORDER BY id DESC LIMIT %s;", (sample_size,))
+        cur.execute(
+            "SELECT id FROM benchmark_data ORDER BY id DESC LIMIT %s;", (sample_size,)
+        )
         rows = cur.fetchall()
     return [row[0] for row in rows]
 
@@ -129,11 +131,15 @@ class CpuSampler:
         resolved = []
         for svc in self.services:
             try:
-                output = subprocess.check_output(
-                    ["docker", "compose", "ps", "-q", svc],
-                    cwd=PROJECT_ROOT,
-                    stderr=subprocess.DEVNULL,
-                ).decode().strip()
+                output = (
+                    subprocess.check_output(
+                        ["docker", "compose", "ps", "-q", svc],
+                        cwd=PROJECT_ROOT,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    .decode()
+                    .strip()
+                )
                 if output:
                     resolved.extend(output.splitlines())
             except subprocess.CalledProcessError:
@@ -152,7 +158,9 @@ class CpuSampler:
                 "{{.Container}},{{.CPUPerc}}",
                 *containers,
             ]
-            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+            output = (
+                subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+            )
         except subprocess.CalledProcessError:
             return
         total = 0.0
@@ -188,9 +196,11 @@ def benchmark_insert(conn):
     latencies = []
     with conn.cursor() as cur:
         for _ in range(SAMPLES):
-            name = "user_" + ''.join(random.choices(string.ascii_lowercase, k=8))
+            name = "user_" + "".join(random.choices(string.ascii_lowercase, k=8))
             email = name + "@example.com"
-            searchable = random.choice(SEARCH_PREFIXES) + f"-{random.randint(1000,9999)}"
+            searchable = (
+                random.choice(SEARCH_PREFIXES) + f"-{random.randint(1000,9999)}"
+            )
             start = time.perf_counter()
             cur.execute(
                 "INSERT INTO benchmark_data (name, email, searchable) VALUES (%s, %s, %s)",
@@ -295,7 +305,9 @@ def main():
         aggregated_results.append((env, measurements))
 
     if baseline_data is None:
-        raise RuntimeError("Baseline measurements missing; ensure baseline environment succeeded")
+        raise RuntimeError(
+            "Baseline measurements missing; ensure baseline environment succeeded"
+        )
 
     baseline_metrics = {}
     for key, payload in baseline_data.items():
@@ -319,7 +331,9 @@ def main():
                 latency_overhead = ((latency_enc - latency_base) / latency_base) * 100
             cpu_overhead = None
             if cpu_base and cpu_enc:
-                cpu_overhead = ((cpu_enc - cpu_base) / cpu_base) * 100 if cpu_base else None
+                cpu_overhead = (
+                    ((cpu_enc - cpu_base) / cpu_base) * 100 if cpu_base else None
+                )
 
             rows.append(
                 {
@@ -327,10 +341,18 @@ def main():
                     "数据库": "PostgreSQL",
                     "操作类型": op["operation"],
                     "加密类型": op["encryption"],
-                    "Baseline延迟 (ms)": round(latency_base, 2) if latency_base else None,
+                    "Baseline延迟 (ms)": (
+                        round(latency_base, 2) if latency_base else None
+                    ),
                     "加密后延迟 (ms)": round(latency_enc, 2) if latency_enc else None,
-                    "延迟开销 (%)": round(latency_overhead, 2) if latency_overhead is not None else None,
-                    "CPU开销 (%)": round(cpu_overhead, 2) if cpu_overhead is not None else None,
+                    "延迟开销 (%)": (
+                        round(latency_overhead, 2)
+                        if latency_overhead is not None
+                        else None
+                    ),
+                    "CPU开销 (%)": (
+                        round(cpu_overhead, 2) if cpu_overhead is not None else None
+                    ),
                 }
             )
 
@@ -352,11 +374,7 @@ def main():
         f.write(",".join(headers) + "\n")
         for row in rows:
             f.write(
-                ",".join(
-                    "" if row[h] is None else str(row[h])
-                    for h in headers
-                )
-                + "\n"
+                ",".join("" if row[h] is None else str(row[h]) for h in headers) + "\n"
             )
 
     log(f"Results saved to {output_path}")
