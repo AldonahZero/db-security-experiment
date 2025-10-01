@@ -1,6 +1,7 @@
 [proxy]
 bind_addr = "0.0.0.0:7432"
 enable_tls = false
+disable_client_auth = true
 
 [auth]
 workspace_id = "DGDDUX4XBGXYTXNT"

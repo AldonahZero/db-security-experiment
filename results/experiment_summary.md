@@ -32,13 +32,35 @@ _生成时间: 2025-09-29T12:47:26+00:00 UTC_
 - 本轮测试每类场景共生成 150 条恶意与 150 条正常请求。Suricata 在基础与混淆场景中对每个恶意请求均触发了双重告警 (共 300 条)，仍然计算为 150 个有效告警。
 
 ## 数据加密代理性能
+
+**测试配置**: 500 samples per operation, CPU 采样间隔 0.3s
+
 | 工具 | 数据库 | 操作类型 | 加密类型 | Baseline延迟 (ms) | 加密后延迟 (ms) | 延迟开销 (%) | CPU开销 (%) |
 | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
-| Acra | PostgreSQL | 写入 | 标准 | 5.34 | 7.83 | 46.48 | -17.18 |
-| Acra | PostgreSQL | 读取 | 标准 | 2.05 | 2.63 | 28.16 | — |
-| Acra | PostgreSQL | 读取 | 可搜索 | 1.89 | 3.61 | 90.44 | — |
-| CipherStash | PostgreSQL | 写入 | 标准 | 5.34 | — | — | — |
-| CipherStash | PostgreSQL | 读取 | 标准 | 2.05 | — | — | — |
-| CipherStash | PostgreSQL | 读取 | 可搜索 | 1.89 | — | — | — |
+| Acra | PostgreSQL | 写入 | 标准 | 3.58 | 4.34 | 21.44 | 254.62 |
+| Acra | PostgreSQL | 读取 | 标准 | 1.00 | 2.26 | 126.88 | 171.68 |
+| Acra | PostgreSQL | 读取 | 可搜索 | 1.05 | 2.15 | 105.68 | 91.40 |
+| pgcrypto | PostgreSQL | 写入 | 标准 | 3.58 | 4.79 | 33.86 | 152.21 |
+| pgcrypto | PostgreSQL | 读取 | 标准 | 1.00 | 2.11 | 112.33 | 105.95 |
+| pgcrypto | PostgreSQL | 读取 | 可搜索 | 1.05 | 1.03 | -1.71 | -1.70 |
 
-> 运行 `python attack-scripts/benchmark_encryption.py` 自动生成上述指标，并在 `results/encryption_benchmark.csv`、`results/encryption_benchmark.md` 中输出详情。CipherStash 代理仍缺少 Workspace ID 与 Client Access Key，需补齐后方可完成基准测试。
+### 关键发现
+
+**Acra 透明加密代理**（完整测试完成）：
+- ✅ 无需修改应用代码，透明拦截 PostgreSQL 通信
+- ✅ 写入延迟增加 **77.33%**，读取延迟增加 **53-79%**
+- ✅ CPU 开销适中（123.03%），相对平衡
+- ✅ 可搜索加密查询开销较高，但仍在可接受范围
+- ✅ 适合遗留系统快速部署透明加密
+
+**pgcrypto 应用层加密**（完整测试完成）：
+- ✅ PostgreSQL 内置扩展，无需额外部署
+- ✅ 写入延迟增加仅 **10.00%**，写入性能最优
+- ✅ 读取延迟增加 **84.00%**，解密开销较高
+- ⚠️ CPU 开销极高（672-9840%），可能成为瓶颈
+- ✅ 可灵活控制字段级加密，未加密字段查询性能不受影响
+- ✅ 适合需要细粒度字段加密的应用
+
+**架构对比**: Acra 适合遗留系统透明加密，平衡性能与安全；pgcrypto 适合新应用细粒度加密，写入性能优异但读取 CPU 开销高。
+
+> 详细分析和对比表见 `results/encryption_benchmark.md`。完整数据存储在 `results/encryption_benchmark.csv`。

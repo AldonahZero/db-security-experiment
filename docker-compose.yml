@@ -77,6 +77,23 @@ services:
     mem_limit: 4g
     mem_reservation: 2g
 
+  # pgcrypto: PostgreSQL 内置加密扩展
+  postgres-pgcrypto:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: pgcrypto
+      POSTGRES_PASSWORD: pgcrypto_pass
+      POSTGRES_DB: pgcrypto_db
+    ports:
+      - "5435:5432"
+    cpus: 4
+    mem_limit: 8g
+    mem_reservation: 6g
+    volumes:
+      - postgres_pgcrypto_data:/var/lib/postgresql/data
+      - ./init-pgcrypto.sql:/docker-entrypoint-initdb.d/init-pgcrypto.sql:ro
+
+  # 保留但停止的 CipherStash 容器
   postgres-cipherstash:
     image: postgres:13
     environment:
@@ -84,12 +101,14 @@ services:
       POSTGRES_PASSWORD: cipherstashpass
       POSTGRES_DB: cipherstash_db
     ports:
-      - "5435:5432"
+      - "5436:5432"
     cpus: 4
     mem_limit: 8g
     mem_reservation: 6g
     volumes:
       - postgres_cipherstash_data:/var/lib/postgresql/data
+    profiles:
+      - disabled
 
   cipherstash-proxy:
     image: cipherstash/proxy:latest
@@ -109,6 +128,8 @@ services:
     cpus: 2
     mem_limit: 4g
     mem_reservation: 2g
+    profiles:
+      - disabled
 
   vuln-api:
     build:
@@ -205,4 +226,5 @@ networks:
 
 volumes:
   postgres_acra_data:
+  postgres_pgcrypto_data:
   postgres_cipherstash_data:

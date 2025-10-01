@@ -12,7 +12,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SAMPLES = 120
+SAMPLES = 500  # 增加到500个样本，确保测试时间足够长以便CPU采样
 READ_SAMPLE_SET = 1000
 SEARCH_PREFIXES = ["alpha", "beta", "gamma", "delta"]
 
@@ -42,16 +42,17 @@ ENVIRONMENTS = [
         "containers": ["acra-server", "postgres-acra"],
     },
     {
-        "name": "cipherstash",
-        "tool": "CipherStash",
+        "name": "pgcrypto",
+        "tool": "pgcrypto",
         "dsn": {
-            "host": os.environ.get("CIPHERSTASH_HOST", "127.0.0.1"),
-            "port": int(os.environ.get("CIPHERSTASH_PORT", "7432")),
-            "dbname": os.environ.get("CIPHERSTASH_DB", "cipherstash_db"),
-            "user": os.environ.get("CIPHERSTASH_USER", "cipherstash"),
-            "password": os.environ.get("CIPHERSTASH_PASSWORD", "cipherstashpass"),
+            "host": os.environ.get("PGCRYPTO_HOST", "127.0.0.1"),
+            "port": int(os.environ.get("PGCRYPTO_PORT", "5435")),
+            "dbname": os.environ.get("PGCRYPTO_DB", "pgcrypto_db"),
+            "user": os.environ.get("PGCRYPTO_USER", "pgcrypto"),
+            "password": os.environ.get("PGCRYPTO_PASSWORD", "pgcrypto_pass"),
         },
-        "containers": ["cipherstash-proxy", "postgres-cipherstash"],
+        "containers": ["postgres-pgcrypto"],
+        "encryption_key": "my_secret_encryption_key_2024",  # 用于 pgcrypto 加密
     },
 ]
 
@@ -75,21 +76,37 @@ def get_connection(dsn: dict):
         conn.close()
 
 
-def ensure_schema(conn) -> None:
+def ensure_schema(conn, use_pgcrypto=False) -> None:
     with conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS benchmark_data (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL,
-                searchable TEXT NOT NULL
-            );
-            """
-        )
+        if use_pgcrypto:
+            # pgcrypto 模式: name 和 email 使用 BYTEA 存储加密数据
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS benchmark_data (
+                    id SERIAL PRIMARY KEY,
+                    name BYTEA NOT NULL,
+                    email BYTEA NOT NULL,
+                    searchable TEXT NOT NULL
+                );
+                """
+            )
+        else:
+            # 标准模式: 所有字段使用 TEXT
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS benchmark_data (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    email TEXT NOT NULL,
+                    searchable TEXT NOT NULL
+                );
+                """
+            )
 
 
-def ensure_dataset(conn, target_rows: int = READ_SAMPLE_SET) -> int:
+def ensure_dataset(
+    conn, target_rows: int = READ_SAMPLE_SET, encryption_key=None
+) -> int:
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM benchmark_data;")
         count = cur.fetchone()[0]
@@ -102,10 +119,16 @@ def ensure_dataset(conn, target_rows: int = READ_SAMPLE_SET) -> int:
                 email = name + "@example.com"
                 prefix = random.choice(prefixes)
                 searchable = f"{prefix}-{random.randint(1000,9999)}"
-                cur.execute(
-                    "INSERT INTO benchmark_data (name, email, searchable) VALUES (%s, %s, %s)",
-                    (name, email, searchable),
-                )
+                if encryption_key:  # pgcrypto 模式
+                    cur.execute(
+                        "INSERT INTO benchmark_data (name, email, searchable) VALUES (encrypt_text(%s, %s), encrypt_text(%s, %s), %s)",
+                        (name, encryption_key, email, encryption_key, searchable),
+                    )
+                else:  # 标准模式
+                    cur.execute(
+                        "INSERT INTO benchmark_data (name, email, searchable) VALUES (%s, %s, %s)",
+                        (name, email, searchable),
+                    )
         conn.commit()
         return count + needed
 
@@ -120,7 +143,7 @@ def collect_ids(conn, sample_size: int = 500):
 
 
 class CpuSampler:
-    def __init__(self, services, interval=0.5):
+    def __init__(self, services, interval=0.3):  # 缩短采样间隔到0.3秒，更频繁采样
         self.services = services
         self.interval = interval
         self.samples = []
@@ -192,7 +215,7 @@ class CpuSampler:
         return statistics.mean(self.samples) if self.samples else None
 
 
-def benchmark_insert(conn):
+def benchmark_insert(conn, encryption_key=None):
     latencies = []
     with conn.cursor() as cur:
         for _ in range(SAMPLES):
@@ -202,16 +225,22 @@ def benchmark_insert(conn):
                 random.choice(SEARCH_PREFIXES) + f"-{random.randint(1000,9999)}"
             )
             start = time.perf_counter()
-            cur.execute(
-                "INSERT INTO benchmark_data (name, email, searchable) VALUES (%s, %s, %s)",
-                (name, email, searchable),
-            )
+            if encryption_key:  # pgcrypto 模式
+                cur.execute(
+                    "INSERT INTO benchmark_data (name, email, searchable) VALUES (encrypt_text(%s, %s), encrypt_text(%s, %s), %s)",
+                    (name, encryption_key, email, encryption_key, searchable),
+                )
+            else:  # 标准模式
+                cur.execute(
+                    "INSERT INTO benchmark_data (name, email, searchable) VALUES (%s, %s, %s)",
+                    (name, email, searchable),
+                )
             conn.commit()
             latencies.append((time.perf_counter() - start) * 1000)
     return latencies
 
 
-def benchmark_read_by_id(conn, ids=None):
+def benchmark_read_by_id(conn, ids=None, encryption_key=None):
     latencies = []
     ids = ids or collect_ids(conn)
     if not ids:
@@ -220,7 +249,13 @@ def benchmark_read_by_id(conn, ids=None):
         for _ in range(SAMPLES):
             target = random.choice(ids)
             start = time.perf_counter()
-            cur.execute("SELECT * FROM benchmark_data WHERE id = %s", (target,))
+            if encryption_key:  # pgcrypto 模式 - 解密
+                cur.execute(
+                    "SELECT id, decrypt_text(name, %s) as name, decrypt_text(email, %s) as email, searchable FROM benchmark_data WHERE id = %s",
+                    (encryption_key, encryption_key, target),
+                )
+            else:  # 标准模式
+                cur.execute("SELECT * FROM benchmark_data WHERE id = %s", (target,))
             cur.fetchone()
             latencies.append((time.perf_counter() - start) * 1000)
     return latencies
@@ -242,14 +277,23 @@ def benchmark_searchable(conn):
     return latencies
 
 
-def run_benchmark(env, operation_key, ids_cache=None):
+def run_benchmark(env, operation_key, ids_cache=None, clear_cache=False):
     fn = globals()[operation_key]
+    encryption_key = env.get("encryption_key")  # 获取 pgcrypto 密钥
+    use_pgcrypto = encryption_key is not None
     with get_connection(env["dsn"]) as conn:
         conn.autocommit = False
-        ensure_schema(conn)
-        ensure_dataset(conn)
+        if clear_cache:
+            # 清空表以避免缓存影响，每个环境第一次测试时执行
+            with conn.cursor() as cur:
+                cur.execute("DROP TABLE IF EXISTS benchmark_data;")
+            conn.commit()
+        ensure_schema(conn, use_pgcrypto=use_pgcrypto)
+        ensure_dataset(conn, encryption_key=encryption_key)
         if operation_key == "benchmark_read_by_id" and ids_cache is not None:
-            latencies = fn(conn, ids_cache)
+            latencies = fn(conn, ids_cache, encryption_key=encryption_key)
+        elif operation_key in ["benchmark_insert", "benchmark_read_by_id"]:
+            latencies = fn(conn, encryption_key=encryption_key)
         else:
             latencies = fn(conn)
     return latencies
@@ -258,17 +302,20 @@ def run_benchmark(env, operation_key, ids_cache=None):
 def measure_environment(env):
     results = {}
     ids_cache = None
+    is_first_op = True
     for op in OPERATIONS:
         sampler = CpuSampler(env["containers"])
         sampler.start()
+        time.sleep(0.5)  # 等待采样器启动并开始收集数据
         try:
             if op["fn"] == "benchmark_read_by_id":
-                latencies = run_benchmark(env, op["fn"], ids_cache)
+                latencies = run_benchmark(env, op["fn"], ids_cache, clear_cache=is_first_op)
                 if latencies and ids_cache is None:
                     with get_connection(env["dsn"]) as conn:
                         ids_cache = collect_ids(conn)
             else:
-                latencies = run_benchmark(env, op["fn"], ids_cache)
+                latencies = run_benchmark(env, op["fn"], ids_cache, clear_cache=is_first_op)
+            is_first_op = False  # 只在第一个操作时清空表
         except Exception as exc:  # pylint: disable=broad-except
             sampler.stop()
             log(f"{env['tool']} {op['operation']} failed: {exc}")
@@ -277,6 +324,7 @@ def measure_environment(env):
                 "cpu": None,
             }
             continue
+        time.sleep(1.0)  # 确保采样器在停止前能采集足够样本
         sampler.stop()
         cpu_avg = sampler.average()
         results[(op["operation"], op["encryption"])] = {
