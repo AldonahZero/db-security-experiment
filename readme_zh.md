@@ -15,7 +15,10 @@
 ### 🔐 模块二: 数据加密对比 (已完成)
 - **Acra 透明代理**: 延迟 +21-127%, 相对CPU增长 +91-255%
 - **pgcrypto 内置扩展**: 延迟 +34-112%, 相对CPU增长 +106-152%
-- 完整报告: `ENCRYPTION_REPORT.md`
+- **SQL注入防护测试**: 使用50个真实Enron员工数据
+  - Acra: 透明解密导致100%明文泄露（离线攻击防护有效，在线攻击无效）
+  - pgcrypto: 加密字段保持密文（字段级防护有效）
+- 完整报告: `ENCRYPTION_REPORT.md`, `ENRON_TEST_SUMMARY.md`
 
 ## 实验环境
 - 主机操作系统：Linux/macOS（实验节点默认 shell 为 `bash`/`zsh`）
@@ -203,10 +206,34 @@ _更新时间: 2025-10-01 | 测试配置: 500 samples per operation, CPU 采样�
 - `results/CPU_SAMPLING_SUCCESS.md` - 数据质量改进报告
 - `ENCRYPTION_REPORT.md` - 完整实验报告
 
+### 加密工具对SQL注入防护能力 (使用Enron数据集)
+
+_测试数据: 50个真实Enron员工账户_
+
+| 工具 | 攻击类型 | 密码字段保护 | 邮箱字段保护 | 适用场景 |
+|------|---------|------------|------------|---------|
+| 无加密 | 联合查询注入 | ❌ 100%明文泄露 | ❌ 100%明文泄露 | 不推荐 |
+| Acra | 联合查询注入 | ❌ 100%明文泄露（透明解密） | ❌ 100%明文泄露 | 仅防离线攻击 |
+| pgcrypto | 联合查询注入 | ✅ 100%保持密文 | ❌ 100%明文泄露（未加密） | 字段级防护 |
+
+**关键发现**:
+- **Acra透明解密问题**: 虽然后端存储为密文，但SQL注入通过应用层访问时会触发自动解密，导致50个员工的密码和邮箱全部以明文形式泄露
+- **pgcrypto字段级加密**: 有效保护了加密字段（密码保持Hex密文），但未加密字段（邮箱）仍会暴露
+- **分层防御重要性**: WAF/IDS阻止95-97%攻击，加密作为最后一道防线保护突破后的数据
+
+详细测试报告:
+- `ENRON_TEST_SUMMARY.md` - Enron数据集测试完成摘要
+- `ENRON_DATASET_USAGE.md` - 数据集使用说明
+- `results/encryption_protection_test.csv` - 原始测试结果
+- `results/encryption_protection_test_report.md` - 详细分析报告
+- `attack-scripts/load_enron_data.py` - 数据提取脚本
+- `attack-scripts/enron_test_data.py` - 50个员工测试数据
+
 ### 说明
 - 基础SQL注入: 直接使用 UNION SELECT 提取信息。
 - 混淆SQL注入: 在关键字之间使用注释绕过简单匹配。
 - 存储过程调用: 利用 pg_sleep() 进行时间延迟侧信道。
 - TPR=True Positive Rate, FPR=False Positive Rate。
+- Enron数据集: Carnegie Mellon University提供的真实企业邮件数据集。
 - 本轮测试每类场景共生成 150 条恶意与 150 条正常请求。Suricata 在基础与混淆场景中对每个恶意请求均触发了双重告警 (共 300 条)，仍然计算为 150 个有效告警。
 - **加密测试**: 每种操作执行 500 个样本，CPU 采样间隔 0.3s，确保数据完整性。每个环境测试前清空表以消除缓存干扰。

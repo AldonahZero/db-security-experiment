@@ -40,13 +40,17 @@ DB_CONFIGS = {
 
 # Enron数据集 - 真实员工数据样本
 # 数据来源: https://www.cs.cmu.edu/~enron/
-TEST_USERS = [
-    ("kenneth.lay", "KL2025Secure!", "kenneth.lay@enron.com"),
-    ("jeffrey.skilling", "JS$kiling2025", "jeffrey.skilling@enron.com"),
-    ("andrew.fastow", "AF_CFO#2025", "andrew.fastow@enron.com"),
-    ("sherron.watkins", "SW_Whistle!25", "sherron.watkins@enron.com"),
-    ("rebecca.mark", "RM@Enron2025", "rebecca.mark@enron.com"),
-]
+import psycopg2
+import sys
+from typing import Dict, List, Tuple
+import csv
+
+# 导入完整的Enron数据集（50个真实员工）
+from enron_test_data import ENRON_TEST_USERS
+
+# 使用真实的Enron员工数据（50人）
+# 数据来源: https://www.cs.cmu.edu/~enron/
+TEST_USERS = ENRON_TEST_USERS
 
 
 def setup_baseline_db(conn):

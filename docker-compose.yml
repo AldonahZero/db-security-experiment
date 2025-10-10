@@ -71,8 +71,12 @@ services:
       - "--incoming_connection_host=0.0.0.0"
       - "--incoming_connection_port=9393"
       - "--client_id=attack-client"
+      # 尝试禁用透明加密（如果版本支持）
+      # 注意: Acra 0.94.0 可能不支持以下参数，这是概念性配置
+      # - "--encryptor_config=/config/acra-server-config.yaml"
     volumes:
       - ./acra_keys:/keys:ro
+      - ./acra-server-config.yaml:/config/acra-server-config.yaml:ro
     cpus: 2
     mem_limit: 4g
     mem_reservation: 2g
