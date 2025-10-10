@@ -40,7 +40,7 @@ encryptor_config:
             target_length: 32
             # 填充字符（NULL字符）
             pad_char: "\x00"
-      
+
       # 如果需要加密邮箱字段，可以添加类似配置
       # - column: email
       #   client_id: attack-client
@@ -63,4 +63,4 @@ connection_pool_size: 10
 max_connections: 100
 
 # 安全配置
-tls_client_auth: 0  # 0=不要求客户端证书，1=要求
+tls_client_auth: 0 # 0=不要求客户端证书，1=要求
