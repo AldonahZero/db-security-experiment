@@ -1,0 +1,665 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+]{article}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% ----------------- 中文字体支持 (xeCJK) -----------------
+% 如果系统安装了 xeCJK, 则使用 xeCJK 来正确处理中文。
+\IfFileExists{xeCJK.sty}{%
+  \usepackage{xeCJK}
+  % 优先使用系统常见中文字体；如果没有安装，请替换为你系统中的中文字体名
+  \setCJKmainfont{PingFang SC}
+  \setCJKsansfont{PingFang SC}
+  \setCJKmonofont{PingFang SC}
+}{%
+  % xeCJK 不可用时，仍尝试由 fontspec 设置字体（在某些 texlive 环境下可行）
+}
+% 使用 fontspec 设置西文字体（unicode-math 已经加载 fontspec）
+\IfFileExists{fontspec.sty}{%
+  \setmainfont{Arial}
+  \setsansfont{Arial}
+  \setmonofont{Menlo}
+}{}
+% ---------------------------------------------------------
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{color}
+\usepackage{fancyvrb}
+\newcommand{\VerbBar}{|}
+\newcommand{\VERB}{\Verb[commandchars=\\\{\}]}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\}}
+% Add ',fontsize=\small' for more characters per line
+\newenvironment{Shaded}{}{}
+\newcommand{\AlertTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\AnnotationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\AttributeTok}[1]{\textcolor[rgb]{0.49,0.56,0.16}{#1}}
+\newcommand{\BaseNTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\BuiltInTok}[1]{\textcolor[rgb]{0.00,0.50,0.00}{#1}}
+\newcommand{\CharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\CommentTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textit{#1}}}
+\newcommand{\CommentVarTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\ConstantTok}[1]{\textcolor[rgb]{0.53,0.00,0.00}{#1}}
+\newcommand{\ControlFlowTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\DataTypeTok}[1]{\textcolor[rgb]{0.56,0.13,0.00}{#1}}
+\newcommand{\DecValTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\DocumentationTok}[1]{\textcolor[rgb]{0.73,0.13,0.13}{\textit{#1}}}
+\newcommand{\ErrorTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\ExtensionTok}[1]{#1}
+\newcommand{\FloatTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\FunctionTok}[1]{\textcolor[rgb]{0.02,0.16,0.49}{#1}}
+\newcommand{\ImportTok}[1]{\textcolor[rgb]{0.00,0.50,0.00}{\textbf{#1}}}
+\newcommand{\InformationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\KeywordTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\NormalTok}[1]{#1}
+\newcommand{\OperatorTok}[1]{\textcolor[rgb]{0.40,0.40,0.40}{#1}}
+\newcommand{\OtherTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{#1}}
+\newcommand{\PreprocessorTok}[1]{\textcolor[rgb]{0.74,0.48,0.00}{#1}}
+\newcommand{\RegionMarkerTok}[1]{#1}
+\newcommand{\SpecialCharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\SpecialStringTok}[1]{\textcolor[rgb]{0.73,0.40,0.53}{#1}}
+\newcommand{\StringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\VariableTok}[1]{\textcolor[rgb]{0.10,0.09,0.49}{#1}}
+\newcommand{\VerbatimStringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\WarningTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\author{}
+\date{}
+
+\begin{document}
+
+\section{SQLancer 使用手册}\label{sqlancer-ux4f7fux7528ux624bux518c}
+
+\subsection{0. 引言}\label{ux5f15ux8a00}
+
+SQLancer
+是一个针对数据库管理系统（DBMS）的高级模糊测试（fuzzing）工具，旨在发现逻辑错误（返回不正确结果集）与性能问题。它使用基于语法的生成器产生有效的
+SQL
+查询，并通过创新的``预言机''（oracles）来判断查询结果是否正确。本文档整合了两份原始手册的内容，提供从理论背景、安装部署、运行示例、预言机原理到高级集成与扩展的完整参考。
+
+** 本手册适合对数据库原理和软件测试有基本了解的开发者与测试工程师。 **
+
+\subsection{1. 快速上手}\label{ux5febux901fux4e0aux624b}
+
+本节提供最核心的安装和运行步骤，让你可以在几分钟内启动一次测试。
+
+\subsubsection{1. 克隆 SQLancer
+仓库}\label{ux514bux9686-sqlancer-ux4ed3ux5e93}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{git}\NormalTok{ clone https://github.com/sqlancer/sqlancer}
+\BuiltInTok{cd}\NormalTok{ sqlancer}
+\end{Highlighting}
+\end{Shaded}
+
+\subsubsection{2. 使用 Maven
+打包项目（跳过测试以加快速度）}\label{ux4f7fux7528-maven-ux6253ux5305ux9879ux76eeux8df3ux8fc7ux6d4bux8bd5ux4ee5ux52a0ux5febux901fux5ea6}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\ExtensionTok{mvn}\NormalTok{ package }\AttributeTok{{-}DskipTests}
+\end{Highlighting}
+\end{Shaded}
+
+\subsubsection{3. 运行一个针对 SQLite
+的测试示例}\label{ux8fd0ux884cux4e00ux4e2aux9488ux5bf9-sqlite-ux7684ux6d4bux8bd5ux793aux4f8b}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\CommentTok{\# {-}{-}num{-}threads 4: 使用 4 个并发线程}
+\CommentTok{\# sqlite3:       目标数据库}
+\CommentTok{\# {-}{-}oracle NoREC:  使用 NoREC 预言机}
+\ExtensionTok{java} \AttributeTok{{-}jar}\NormalTok{ sqlancer{-}}\PreprocessorTok{*}\NormalTok{.jar }\AttributeTok{{-}{-}num{-}threads}\NormalTok{ 4 sqlite3 }\AttributeTok{{-}{-}oracle}\NormalTok{ NoREC}
+\end{Highlighting}
+\end{Shaded}
+
+当看到 SQLancer 开始输出测试日志时，说明它已成功运行。
+
+\subsection{2. 环境配置}\label{ux73afux5883ux914dux7f6e}
+
+在深入使用 SQLancer 之前，请确保你的系统满足以下环境要求。
+
+\subsubsection{2.1. 必需环境}\label{ux5fc5ux9700ux73afux5883}
+
+\begin{itemize}
+\tightlist
+\item
+  Java Development Kit (JDK): SQLancer 是一个 Java 项目，需要 JDK 8
+  或更高版本来编译和运行。
+\item
+  Maven: 用于项目构建和依赖管理。大多数包管理器都可以直接安装（例如
+  \texttt{sudo\ apt\ install\ maven}）。
+\item
+  Git: 用于从 GitHub 克隆项目仓库。
+\item
+  目标数据库: 你需要预先安装并运行你希望测试的数据库系统，例如
+  PostgreSQL, MySQL, SQLite 等。SQLancer 不会为你安装数据库。
+\end{itemize}
+
+\subsubsection{2.2. 验证环境}\label{ux9a8cux8bc1ux73afux5883}
+
+你可以通过以下命令检查环境是否配置妥当：
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\ExtensionTok{java} \AttributeTok{{-}version}
+\ExtensionTok{mvn} \AttributeTok{{-}version}
+\FunctionTok{git} \AttributeTok{{-}{-}version}
+\end{Highlighting}
+\end{Shaded}
+
+如果这些命令都能成功返回版本信息，说明你的基础环境已准备就绪。
+
+\subsection{3. 目录}\label{ux76eeux5f55}
+
+\begin{itemize}
+\tightlist
+\item
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \setcounter{enumi}{3}
+  \tightlist
+  \item
+    理论基础与模糊测试方法
+  \end{enumerate}
+\item
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \setcounter{enumi}{4}
+  \tightlist
+  \item
+    SQLancer 框架与架构原则
+  \end{enumerate}
+\item
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \setcounter{enumi}{5}
+  \tightlist
+  \item
+    安装与初始部署
+  \end{enumerate}
+\item
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \setcounter{enumi}{6}
+  \tightlist
+  \item
+    操作参数与配置
+  \end{enumerate}
+\item
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \setcounter{enumi}{7}
+  \tightlist
+  \item
+    核心预言机详解
+  \end{enumerate}
+\item
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \setcounter{enumi}{8}
+  \tightlist
+  \item
+    扩展与开发指南
+  \end{enumerate}
+\item
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \setcounter{enumi}{9}
+  \tightlist
+  \item
+    在 CI/CD 中部署
+  \end{enumerate}
+\item
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \setcounter{enumi}{10}
+  \tightlist
+  \item
+    结果分析与日志
+  \end{enumerate}
+\item
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \setcounter{enumi}{11}
+  \tightlist
+  \item
+    最佳实践与总结
+  \end{enumerate}
+\item
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \setcounter{enumi}{12}
+  \tightlist
+  \item
+    附录：常见命令与代码块
+  \end{enumerate}
+\end{itemize}
+
+\subsection{4.
+理论基础与模糊测试方法}\label{ux7406ux8bbaux57faux7840ux4e0eux6a21ux7ccaux6d4bux8bd5ux65b9ux6cd5}
+
+现代 DBMS 是复杂软件系统，逻辑错误（Logic
+Bugs）可能在不崩溃的情况下返回错误结果，难以通过传统测试发现。模糊测试（fuzzing）通过自动化生成大量输入，触发边界条件与未考虑路径，从而找到错误。
+
+模糊测试的三大组件：生成器（Generator/Poet）、传递器（Courier）、预言机（Oracle）。
+
+两类模糊测试方法：
+
+\begin{itemize}
+\tightlist
+\item
+  基于变异（Mutation-based）：对已有种子输入做随机变更，优点是实现简单、速度快，但多数变异会被解析器早期拒绝，难以测试优化器或执行引擎。
+\item
+  基于生成（Generation-based / Grammar-based）：根据 SQL
+  语法从头生成有效查询，能够深入测试执行引擎与优化器，SQLancer
+  采用此法以确保生成的查询语法有效。
+\end{itemize}
+
+测试预言机问题（Test Oracle
+Problem）是模糊测试的核心挑战之一：当目标程序没有崩溃时，如何判定其行为是否正确？SQLancer
+的创新在于设计多种预言机（如 TLP、NoREC、PQS
+等）来检测逻辑错误而无需预先知道``正确答案''。
+
+\subsection{5. SQLancer
+框架与架构原则}\label{sqlancer-ux6846ux67b6ux4e0eux67b6ux6784ux539fux5219}
+
+SQLancer 通常采用两阶段流程：
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  数据库状态生成（Database
+  Generation）：生成表、插入数据、建立索引与视图，创建复杂数据库状态以提高触发错误的概率。\\
+\item
+  测试（Testing）：在固定的数据库状态上生成并执行查询，使用预言机判断结果是否正确。
+\end{enumerate}
+
+将状态生成与查询测试分离的好处是：当第二阶段出现错误时，更容易将其归因于查询处理（规划器、优化器、执行器）而非数据修改交互。
+
+SQLancer 是用 Java 实现并使用 Maven
+构建（原始项目）。不过，本手册也包含以
+Python/轻量工具实现的变体或衍生项目（例如 \texttt{SQLlancer}
+文档中所描述的 Python 风格用法），便于用户在不同环境中采用相同方法论。
+
+\subsection{6.
+安装与初始部署}\label{ux5b89ux88c5ux4e0eux521dux59cbux90e8ux7f72}
+
+SQLancer 是用 Java 实现并使用 Maven 构建（原始项目）。以下步骤为典型的
+SQLancer（Java 版本）安装与运行步骤。
+
+\subsubsection{Java / 官方 SQLancer
+安装（推荐用于完整功能）}\label{java-ux5b98ux65b9-sqlancer-ux5b89ux88c5ux63a8ux8350ux7528ux4e8eux5b8cux6574ux529fux80fd}
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  克隆仓库：
+\end{enumerate}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{git}\NormalTok{ clone https://github.com/sqlancer/sqlancer}
+\BuiltInTok{cd}\NormalTok{ sqlancer}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\setcounter{enumi}{1}
+\tightlist
+\item
+  打包项目（跳过测试以加快构建）：
+\end{enumerate}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\ExtensionTok{mvn}\NormalTok{ package }\AttributeTok{{-}DskipTests}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\setcounter{enumi}{2}
+\tightlist
+\item
+  运行示例命令：
+\end{enumerate}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\ExtensionTok{java} \AttributeTok{{-}jar}\NormalTok{ sqlancer{-}}\PreprocessorTok{*}\NormalTok{.jar }\AttributeTok{{-}{-}num{-}threads}\NormalTok{ 4 sqlite3 }\AttributeTok{{-}{-}oracle}\NormalTok{ NoREC}
+\end{Highlighting}
+\end{Shaded}
+
+说明： - \texttt{-\/-num-threads\ 4}：使用 4 个并发线程。\\
+- \texttt{sqlite3}：目标 DBMS，可替换为 \texttt{postgres},
+\texttt{mysql} 等（需对应 provider 支持）。\\
+- `-- 注：Java 版本与轻量 Python 版本在功能与可扩展性上不同。Java
+版本（官方 SQLancer）提供成熟的预言机与 provider 生态，适合深入研究
+DBMS；Python 版本适用于快速原型或特定语法驱动的测试。
+
+\subsection{7.
+操作参数与配置}\label{ux64cdux4f5cux53c2ux6570ux4e0eux914dux7f6e}
+
+SQLancer 的命令行参数遵循一个重要规则：通用选项（例如
+\texttt{-\/-num-threads}）必须位于 DBMS 名称之前，而 DBMS 特定选项（例如
+\texttt{-\/-oracle}）必须位于 DBMS 名称之后。
+
+常用参数示例：
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{{-}{-}num{-}threads \textless{}n\textgreater{}           \# 通用：在 DBMS 之前}
+\NormalTok{{-}{-}timeout{-}seconds \textless{}secs\textgreater{}    \# 通用：设置整个运行或单条查询超时时间}
+\NormalTok{{-}{-}num{-}tries \textless{}n\textgreater{}             \# 通用：在发现 n 个错误后退出}
+\NormalTok{{-}{-}log{-}each{-}select           \# 通用：记录每条 SELECT（默认启用）}
+\NormalTok{[dbms{-}name]                 \# 例如 sqlite3, postgres}
+\NormalTok{{-}{-}oracle \textless{}OracleName\textgreater{}       \# 在 DBMS 名称之后指定使用的预言机，例如 NoREC、TLP、PQS}
+\end{Highlighting}
+\end{Shaded}
+
+一些用于自动化归约与调试的实验性选项（部分仅在官方 Java 版本可用）：
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{{-}{-}use{-}reducer}
+\NormalTok{{-}{-}ast{-}reducer{-}max{-}steps \textless{}n\textgreater{}}
+\NormalTok{{-}{-}ast{-}reducer{-}max{-}time \textless{}secs\textgreater{}}
+\end{Highlighting}
+\end{Shaded}
+
+此外，日志目录下会保存触发错误的 \texttt{.log}
+文件，包含用于重现错误的最小 SQL 语句集。
+
+\subsection{8.
+核心预言机详解}\label{ux6838ux5fc3ux9884ux8a00ux673aux8be6ux89e3}
+
+SQLancer
+最有价值的贡献之一是其多样的预言机（Oracles），它们将查询转换为可验证的断言，从而在不需要``正确答案''的情况下发现错误。
+
+\subsubsection{1) 三值逻辑划分（Ternary Logic Partitioning -
+TLP）}\label{ux4e09ux503cux903bux8f91ux5212ux5206ternary-logic-partitioning---tlp}
+
+原理：对布尔谓词 p 的求值存在三个可能：TRUE、FALSE、NULL。TLP 将原始查询
+Q 拆分为三个子查询：WHERE p、WHERE NOT p、WHERE p IS
+NULL。三个结果的并集应与没有谓词的查询结果等价。若不等价则发现错误。
+
+以下是 TLP 的工作原理示意图：
+
+\begin{verbatim}
+原始查询 Q: SELECT * FROM t WHERE p
+
+拆分为：
+- Q1: SELECT * FROM t WHERE p          (TRUE 行)
+- Q2: SELECT * FROM t WHERE NOT p      (FALSE 行)
+- Q3: SELECT * FROM t WHERE p IS NULL  (NULL 行)
+
+验证: Q1 ∪ Q2 ∪ Q3 == SELECT * FROM t
+若不等，则发现逻辑错误
+\end{verbatim}
+
+适用：检测 WHERE、GROUP BY、HAVING、聚合函数、DISTINCT 等对 NULL
+与布尔逻辑敏感的场景。
+
+\subsubsection{2)
+非优化引用引擎构建（NoREC）}\label{ux975eux4f18ux5316ux5f15ux7528ux5f15ux64ceux6784ux5efanorec}
+
+原理：将查询改写为一个强制全表扫描、难以被优化的等价查询。比如把
+\texttt{SELECT\ *\ FROM\ t\ WHERE\ p} 转换为
+\texttt{SELECT\ (p\ IS\ TRUE)\ FROM\ t}，并比较结果中 TRUE
+的计数与原查询的返回行数是否匹配。若不匹配则判定为优化器或执行错误。
+
+NoREC 原理示意图：
+
+\begin{verbatim}
+优化查询: SELECT * FROM t WHERE p  (可能使用索引)
+
+转换为非优化查询: SELECT (p IS TRUE) FROM t  (强制全表扫描)
+
+比较:
+- 优化查询结果行数 == 非优化查询 TRUE 计数
+- 若不匹配，则优化器错误
+\end{verbatim}
+
+适用：主要用于发现优化器相关错误，尤其是索引使用与过滤条件相关的错误。
+
+\subsubsection{3) 枢轴查询合成（Pivoted Query Synthesis -
+PQS）}\label{ux67a2ux8f74ux67e5ux8be2ux5408ux6210pivoted-query-synthesis---pqs}
+
+原理：随机选取一行（pivot row），生成一个谓词并保证对该行为
+TRUE。执行查询后，枢轴行必须出现在结果集，否则存在执行或语义错误。
+
+PQS 工作流程：
+
+\begin{verbatim}
+1. 从表中随机选择一行 (Pivot Row)
+
+2. 生成谓词 p，使 p 对 Pivot Row 求值为 TRUE
+
+3. 执行查询: SELECT * FROM t WHERE p
+
+4. 检查: Pivot Row 是否在结果集中？
+   - 是: 正常
+   - 否: 发现逻辑错误
+\end{verbatim}
+
+适用：对复杂 WHERE 子句、索引和执行引擎错误检测非常有效。
+
+\subsubsection{4)
+基数估计约束测试（CERT）}\label{ux57faux6570ux4f30ux8ba1ux7ea6ux675fux6d4bux8bd5cert}
+
+原理：校验查询规划器估计的基数与实际行数之间的显著偏差，从而发现性能相关错误（选择了次优计划）。
+
+适用：用于性能回归、查询计划选择错误的检测（非逻辑错误）。
+
+\subsubsection{5) 其他预言机}\label{ux5176ux4ed6ux9884ux8a00ux673a}
+
+\begin{itemize}
+\tightlist
+\item
+  差分查询计划（DQP）：对连接与子查询等场景的逻辑错误检测。\\
+\item
+  崩溃/隐式崩溃：当 DBMS 进程终止时记录为崩溃错误。\\
+\item
+  非预期内部错误：将返回但不在预期错误列表中的内部错误视为潜在问题。
+\end{itemize}
+
+组合使用多个预言机能覆盖 DBMS
+的不同子系统（解析器、规划器、优化器、执行引擎、存储引擎）。
+
+\subsection{9.
+扩展与开发指南}\label{ux6269ux5c55ux4e0eux5f00ux53d1ux6307ux5357}
+
+对新 DBMS 或新 SQL 方言的支持通常需要在 SQLancer 中实现
+provider：包含连接管理、Schema
+生成、表达式生成器（ExpressionGenerator）以及预言机的适配实现。
+
+概览步骤：
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  确定目标 DBMS 及其 SQL 方言。
+\item
+  在项目中新增 provider 包（Java 项目中为一个新的 package）。
+\item
+  实现 Provider 类（管理连接与选项）。
+\item
+  实现 Schema 生成器以创建表、索引、视图等。\\
+\item
+  实现
+  ExpressionGenerator，为目标方言生成合法的表达式（这是最复杂的部分）。
+\item
+  适配并实现需要的预言机（如 NoREC、PQS 等）。
+\end{enumerate}
+
+示例参考：DataFusion 的 SQLancer
+支持分支（\texttt{datafusion-sqlancer}）展示了如何为 DataFusion 实现
+\texttt{DataFusionExpressionGenerator.java} 与
+\texttt{DataFusionNoRECOracle.java}。
+
+设计要点与权衡：
+
+\begin{itemize}
+\tightlist
+\item
+  SQLancer
+  的生成器采用递归与类型化的策略（生成布尔表达式可能需要生成数字表达式等）。\\
+\item
+  该设计虽不如声明式语法（如
+  ANTLR）易于扩展，但能提供更细粒度和性能优化的生成逻辑，这对预言机（尤其是
+  PQS 等需要与生成器紧密协作的预言机）非常重要。
+\end{itemize}
+
+\subsection{10. 在 CI/CD 中部署}\label{ux5728-cicd-ux4e2dux90e8ux7f72}
+
+模糊测试通常是长期运行的任务，不适合与短时间的同步 CI 步骤直接绑定。将
+SQLancer 集成到异步 CI 流程的建议：
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  触发方式：按计划（夜间）、或在合并到主分支后触发。\\
+\item
+  环境准备：在隔离容器或 VM 中构建并启动目标 DBMS 的最新版本。\\
+\item
+  启动 SQLancer：以后台进程或异步作业运行，并设置超时（例如
+  \texttt{-\/-timeout-seconds\ 7200} 表示运行 2 小时）。
+\item
+  日志聚合：将 \texttt{logs/} 或结果目录写到持久存储（如 S3）。
+\item
+  异步错误分类：独立进程扫描日志目录，发现 \texttt{.log} 后自动在 Issue
+  Tracker 中创建问题并附带 \texttt{.log} 文件。\\
+\item
+  自动化报告：将触发的 \texttt{.log}
+  与构建元信息一起提交到错误跟踪系统。
+\end{enumerate}
+
+最佳实践：
+
+\begin{itemize}
+\tightlist
+\item
+  将模糊测试作为异步任务运行，避免阻塞普通流水线。\\
+\item
+  使用容器化（Docker）保证可复现的环境。\\
+\item
+  维护语法/种子库以指导数据库状态生成与语句组合。\\
+\item
+  不同运行使用不同预言机以最大化覆盖（例如夜间运行 NoREC，周末运行
+  TLP）。
+\end{itemize}
+
+\subsection{11.
+结果分析与日志}\label{ux7ed3ux679cux5206ux6790ux4e0eux65e5ux5fd7}
+
+SQLancer 在日志目录下生成多类文件：
+
+\begin{itemize}
+\tightlist
+\item
+  \texttt{*-cur.log}：当 \texttt{-\/-log-each-select}
+  启用时，包含当前会话执行的所有 SELECT 语句日志。\\
+\item
+  \texttt{*.log}（发生错误时）：包含用于重现错误的最小 SQL
+  语句集合（DDL/DML +
+  触发的查询）。这类文件设计为可执行脚本以便开发者复现并调试问题。
+\end{itemize}
+
+最小化 \texttt{.log} 文件通常由工具自动归约生成（实验性 AST
+归约器可进一步缩小测试用例）。
+
+复现错误的步骤示例：
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\CommentTok{\# 在干净环境启动数据库实例}
+\CommentTok{\# 执行日志中提供的 .sql 或 .log 文件}
+\CommentTok{\# 观察是否复现崩溃或逻辑差异}
+\ExtensionTok{psql} \AttributeTok{{-}h}\NormalTok{ localhost }\AttributeTok{{-}U}\NormalTok{ testuser }\AttributeTok{{-}d}\NormalTok{ testdb }\AttributeTok{{-}f}\NormalTok{ reproduced\_error.sql}
+\end{Highlighting}
+\end{Shaded}
+
+对性能问题（hangs）建议使用 \texttt{EXPLAIN} 或
+\texttt{EXPLAIN\ ANALYZE} 来查看查询计划并找出规划器/优化器的瓶颈。
+
+\subsection{12.
+最佳实践与策略}\label{ux6700ux4f73ux5b9eux8df5ux4e0eux7b56ux7565}
+
+\begin{itemize}
+\tightlist
+\item
+  隔离环境：在独立测试环境运行，避免破坏生产数据。\\
+\item
+  优先处理崩溃类（Crashes），其次是死锁/挂起（Hangs），最后是逻辑错误（Logic
+  Bugs）。\\
+\item
+  记录随机种子（seed）以便复现。\\
+\item
+  语法优先：花时间设计高质量的语法规则比无限制运行更有效率。\\
+\item
+  结合多种预言机以提高覆盖：NoREC 针对优化器，TLP 针对
+  NULL/布尔逻辑，PQS 对枢轴行不变性非常敏感。
+\end{itemize}
+
+\subsection{13.
+附录：常见命令与代码块}\label{ux9644ux5f55ux5e38ux89c1ux547dux4ee4ux4e0eux4ee3ux7801ux5757}
+
+构建与运行（Java 版本）示例：
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{git}\NormalTok{ clone https://github.com/sqlancer/sqlancer}
+\BuiltInTok{cd}\NormalTok{ sqlancer}
+\ExtensionTok{mvn}\NormalTok{ package }\AttributeTok{{-}DskipTests}
+\ExtensionTok{java} \AttributeTok{{-}jar}\NormalTok{ sqlancer{-}}\PreprocessorTok{*}\NormalTok{.jar }\AttributeTok{{-}{-}num{-}threads}\NormalTok{ 4 sqlite3 }\AttributeTok{{-}{-}oracle}\NormalTok{ NoREC}
+\end{Highlighting}
+\end{Shaded}
+
+
+\end{document}
