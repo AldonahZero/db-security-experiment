@@ -1,4 +1,4 @@
-scenario,shard_count,worker_count,hotspot_shard_id,hotspot_worker
-citus_uniform,32,3,102023,citus-worker-0
-citus_hot70,32,3,102023,citus-worker-0
-citus_hot90,32,3,102023,citus-worker-0
+场景,重复次数,热点分片编号,热点分片所在工作节点,Citus分片数,Citus分片数标准差,Citus分片数95%置信区间半宽,工作节点数,工作节点数标准差,工作节点数95%置信区间半宽
+均匀流量,5,102023,Citus工作节点0,32.0,0.0,0.0,3.0,0.0,0.0
+70% 热点流量,5,102023,Citus工作节点0,32.0,0.0,0.0,3.0,0.0,0.0
+90% 热点流量,5,102023,Citus工作节点0,32.0,0.0,0.0,3.0,0.0,0.0

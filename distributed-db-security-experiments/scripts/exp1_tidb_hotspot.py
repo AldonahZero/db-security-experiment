@@ -34,6 +34,7 @@ TIKV_CONTAINERS = ["exp1_tidb_tikv0", "exp1_tidb_tikv1", "exp1_tidb_tikv2"]
 
 @dataclass(frozen=True)
 class TidbRequest:
+    run_id: int
     request_id: int
     scenario: str
     operation: str
@@ -45,6 +46,7 @@ class TidbRequest:
 
 @dataclass
 class TidbResult:
+    run_id: int
     timestamp: str
     start_ts: float
     end_ts: float
@@ -92,7 +94,8 @@ class ConnectionPool:
 
 
 class ResourceSampler:
-    def __init__(self, scenario: str, interval_s: float = 0.5) -> None:
+    def __init__(self, run_id: int, scenario: str, interval_s: float = 0.5) -> None:
+        self.run_id = run_id
         self.scenario = scenario
         self.interval_s = interval_s
         self.samples: List[Dict[str, object]] = []
@@ -108,7 +111,7 @@ class ResourceSampler:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            self.samples.extend(fetch_tikv_stats(self.scenario))
+            self.samples.extend(fetch_tikv_stats(self.run_id, self.scenario))
             self._stop.wait(self.interval_s)
 
 
@@ -124,36 +127,46 @@ def main() -> int:
         compose(args.compose_file, ["up", "-d"], root)
 
     wait_for_tidb(args.host, args.port, args.wait_timeout)
-    prepare_schema(args.host, args.port, args.user, args.database)
 
     all_results: List[Dict[str, object]] = []
     all_samples: List[Dict[str, object]] = []
     all_regions: List[Dict[str, object]] = []
     scenario_names = split_arg(args.scenarios, SCENARIOS.keys())
 
-    for scenario in scenario_names:
-        specs = build_workload(scenario, args.requests, args.seed)
-        all_regions.extend(fetch_region_observations(args.host, args.port, args.user, args.database, scenario, "before"))
-        sampler = ResourceSampler(scenario, args.sample_interval_s)
-        pool = ConnectionPool(args.connection_pool_size, args.host, args.port, args.user, args.database)
-        sampler.start()
-        started = time.time()
-        try:
-            print(f"[tidb-exp1] scenario={scenario} requests={len(specs)} concurrency={args.concurrency}", flush=True)
-            results = run_workload(pool, specs, args.concurrency)
-        finally:
-            sampler.stop()
-            pool.close()
-        elapsed = time.time() - started
-        success_count = sum(1 for result in results if result.success)
-        print(
-            f"[tidb-exp1] done scenario={scenario} elapsed={elapsed:.2f}s "
-            f"success={success_count}/{len(results)}",
-            flush=True,
-        )
-        all_results.extend(asdict(result) for result in results)
-        all_samples.extend(sampler.samples)
-        all_regions.extend(fetch_region_observations(args.host, args.port, args.user, args.database, scenario, "after"))
+    for run_id in range(1, args.runs + 1):
+        print(f"[tidb-exp1] run_id={run_id}/{args.runs}", flush=True)
+        prepare_schema(args.host, args.port, args.user, args.database)
+        for scenario in scenario_names:
+            specs = build_workload(run_id, scenario, args.requests, args.seed + run_id * 100000)
+            all_regions.extend(
+                fetch_region_observations(args.host, args.port, args.user, args.database, run_id, scenario, "before")
+            )
+            sampler = ResourceSampler(run_id, scenario, args.sample_interval_s)
+            pool = ConnectionPool(args.connection_pool_size, args.host, args.port, args.user, args.database)
+            sampler.start()
+            started = time.time()
+            try:
+                print(
+                    f"[tidb-exp1] run_id={run_id} scenario={scenario} "
+                    f"requests={len(specs)} concurrency={args.concurrency}",
+                    flush=True,
+                )
+                results = run_workload(pool, specs, args.concurrency)
+            finally:
+                sampler.stop()
+                pool.close()
+            elapsed = time.time() - started
+            success_count = sum(1 for result in results if result.success)
+            print(
+                f"[tidb-exp1] done run_id={run_id} scenario={scenario} elapsed={elapsed:.2f}s "
+                f"success={success_count}/{len(results)}",
+                flush=True,
+            )
+            all_results.extend(asdict(result) for result in results)
+            all_samples.extend(sampler.samples)
+            all_regions.extend(
+                fetch_region_observations(args.host, args.port, args.user, args.database, run_id, scenario, "after")
+            )
 
     write_csv(raw_dir / "exp1_tidb_hotspot_requests.csv", all_results)
     write_csv(raw_dir / "exp1_tidb_tikv_resource_samples.csv", all_samples)
@@ -169,6 +182,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--user", default="root")
     parser.add_argument("--database", default="exp1_tidb")
     parser.add_argument("--requests", type=int, default=900)
+    parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--concurrency", type=int, default=96)
     parser.add_argument("--connection-pool-size", type=int, default=96)
     parser.add_argument("--sample-interval-s", type=float, default=0.5)
@@ -256,7 +270,7 @@ def prepare_schema(host: str, port: int, user: str, database: str) -> None:
     time.sleep(8)
 
 
-def build_workload(scenario: str, requests: int, seed: int) -> List[TidbRequest]:
+def build_workload(run_id: int, scenario: str, requests: int, seed: int) -> List[TidbRequest]:
     rng = random.Random(seed + sum(ord(ch) for ch in scenario))
     hot_fraction = SCENARIOS[scenario]
     specs: List[TidbRequest] = []
@@ -265,6 +279,7 @@ def build_workload(scenario: str, requests: int, seed: int) -> List[TidbRequest]
         item_id = rng.choice(HOT_KEYS) if is_hot else rng.randint(1, 30000)
         specs.append(
             TidbRequest(
+                run_id=run_id,
                 request_id=request_id,
                 scenario=scenario,
                 operation=choose_operation(rng),
@@ -330,6 +345,7 @@ def execute_request(pool: ConnectionPool, spec: TidbRequest) -> TidbResult:
             pool.release(conn)
     ended = time.time()
     return TidbResult(
+        run_id=spec.run_id,
         timestamp=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(ended)),
         start_ts=started,
         end_ts=ended,
@@ -349,7 +365,7 @@ def execute_request(pool: ConnectionPool, spec: TidbRequest) -> TidbResult:
     )
 
 
-def fetch_tikv_stats(scenario: str) -> List[Dict[str, object]]:
+def fetch_tikv_stats(run_id: int, scenario: str) -> List[Dict[str, object]]:
     stats = docker_stats(TIKV_CONTAINERS)
     rows = []
     for name in TIKV_CONTAINERS:
@@ -358,6 +374,7 @@ def fetch_tikv_stats(scenario: str) -> List[Dict[str, object]]:
             {
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "ts": time.time(),
+                "run_id": run_id,
                 "system": "TiDB",
                 "scenario": scenario,
                 "component": "TiKV",
@@ -410,6 +427,7 @@ def fetch_region_observations(
     port: int,
     user: str,
     database: str,
+    run_id: int,
     scenario: str,
     phase: str,
 ) -> List[Dict[str, object]]:
@@ -421,12 +439,13 @@ def fetch_region_observations(
             columns = [desc[0] for desc in cur.description]
             for values in cur.fetchall():
                 record = dict(zip(columns, values))
-                rows.append(normalize_region_record(record, scenario, phase))
+                rows.append(normalize_region_record(record, run_id, scenario, phase))
     except Exception as exc:
         rows.append(
             {
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "ts": time.time(),
+                "run_id": run_id,
                 "system": "TiDB",
                 "scenario": scenario,
                 "phase": phase,
@@ -444,15 +463,16 @@ def fetch_region_observations(
         )
     finally:
         conn.close()
-    rows.extend(fetch_pd_hot_regions(scenario, phase))
+    rows.extend(fetch_pd_hot_regions(run_id, scenario, phase))
     return rows
 
 
-def normalize_region_record(record: Dict[str, object], scenario: str, phase: str) -> Dict[str, object]:
+def normalize_region_record(record: Dict[str, object], run_id: int, scenario: str, phase: str) -> Dict[str, object]:
     lower = {str(key).lower(): value for key, value in record.items()}
     return {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "ts": time.time(),
+        "run_id": run_id,
         "system": "TiDB",
         "scenario": scenario,
         "phase": phase,
@@ -476,7 +496,7 @@ def first(record: Dict[str, object], keys: List[str]) -> object:
     return ""
 
 
-def fetch_pd_hot_regions(scenario: str, phase: str) -> List[Dict[str, object]]:
+def fetch_pd_hot_regions(run_id: int, scenario: str, phase: str) -> List[Dict[str, object]]:
     rows = []
     for kind in ["write", "read"]:
         try:
@@ -486,6 +506,7 @@ def fetch_pd_hot_regions(scenario: str, phase: str) -> List[Dict[str, object]]:
                 {
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     "ts": time.time(),
+                    "run_id": run_id,
                     "system": "TiDB",
                     "scenario": scenario,
                     "phase": f"{phase}_pd_hot_{kind}",
@@ -506,6 +527,7 @@ def fetch_pd_hot_regions(scenario: str, phase: str) -> List[Dict[str, object]]:
                 {
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     "ts": time.time(),
+                    "run_id": run_id,
                     "system": "TiDB",
                     "scenario": scenario,
                     "phase": f"{phase}_pd_hot_{kind}",

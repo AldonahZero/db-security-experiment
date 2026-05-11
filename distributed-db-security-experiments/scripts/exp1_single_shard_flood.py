@@ -37,8 +37,9 @@ HOT_KEYS = [3000, 3003, 3006, 3009, 3012]
 
 
 class ResourceSampler:
-    def __init__(self, dsns: List[str], scenario: str, defense: str, interval_s: float = 0.5) -> None:
+    def __init__(self, dsns: List[str], run_id: int, scenario: str, defense: str, interval_s: float = 0.5) -> None:
         self.dsns = dsns
+        self.run_id = run_id
         self.scenario = scenario
         self.defense = defense
         self.interval_s = interval_s
@@ -55,7 +56,10 @@ class ResourceSampler:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            self.samples.extend(fetch_resource_sample(self.dsns, self.scenario, self.defense))
+            samples = fetch_resource_sample(self.dsns, self.scenario, self.defense)
+            for sample in samples:
+                sample["run_id"] = self.run_id
+            self.samples.extend(samples)
             self._stop.wait(self.interval_s)
 
 
@@ -81,45 +85,50 @@ def main() -> int:
     scenario_names = split_arg(args.scenarios, SCENARIOS.keys())
     defense_names = split_arg(args.defenses, DEFENSES)
 
-    for scenario in scenario_names:
-        for defense in defense_names:
-            specs = build_workload(
-                scenario=scenario,
-                defense=defense,
-                requests=args.requests,
-                db_sleep_ms=args.db_sleep_ms,
-                seed=args.seed + len(all_results),
-            )
-            print(
-                f"[exp1] scenario={scenario} defense={defense} "
-                f"requests={len(specs)} concurrency={args.concurrency}",
-                flush=True,
-            )
-            router = ShardRouter(
-                dsns=dsns,
-                defense=defense,
-                hot_keys=HOT_KEYS,
-                max_connections_per_shard=args.max_connections_per_shard,
-                statement_timeout_ms=args.statement_timeout_ms,
-                pool_timeout_s=args.pool_timeout_s,
-            )
-            sampler = ResourceSampler(dsns, scenario, defense, interval_s=args.sample_interval_s)
-            sampler.start()
-            started = time.time()
-            try:
-                results = run_workload(router, specs, args.concurrency, defense)
-            finally:
-                sampler.stop()
-                router.close()
-            elapsed = time.time() - started
-            successes = sum(1 for result in results if result.success)
-            print(
-                f"[exp1] done scenario={scenario} defense={defense} "
-                f"elapsed={elapsed:.2f}s success={successes}/{len(results)}",
-                flush=True,
-            )
-            all_results.extend(asdict(result) for result in results)
-            all_samples.extend(sampler.samples)
+    for run_id in range(1, args.runs + 1):
+        print(f"[exp1] run_id={run_id}/{args.runs}", flush=True)
+        for scenario in scenario_names:
+            for defense in defense_names:
+                specs = build_workload(
+                    scenario=scenario,
+                    defense=defense,
+                    requests=args.requests,
+                    db_sleep_ms=args.db_sleep_ms,
+                    seed=args.seed + run_id * 100000 + len(all_results),
+                )
+                print(
+                    f"[exp1] run_id={run_id} scenario={scenario} defense={defense} "
+                    f"requests={len(specs)} concurrency={args.concurrency}",
+                    flush=True,
+                )
+                router = ShardRouter(
+                    dsns=dsns,
+                    defense=defense,
+                    hot_keys=HOT_KEYS,
+                    max_connections_per_shard=args.max_connections_per_shard,
+                    statement_timeout_ms=args.statement_timeout_ms,
+                    pool_timeout_s=args.pool_timeout_s,
+                )
+                sampler = ResourceSampler(dsns, run_id, scenario, defense, interval_s=args.sample_interval_s)
+                sampler.start()
+                started = time.time()
+                try:
+                    results = run_workload(router, specs, args.concurrency, defense)
+                finally:
+                    sampler.stop()
+                    router.close()
+                elapsed = time.time() - started
+                successes = sum(1 for result in results if result.success)
+                print(
+                    f"[exp1] done run_id={run_id} scenario={scenario} defense={defense} "
+                    f"elapsed={elapsed:.2f}s success={successes}/{len(results)}",
+                    flush=True,
+                )
+                for result in results:
+                    row = asdict(result)
+                    row["run_id"] = run_id
+                    all_results.append(row)
+                all_samples.extend(sampler.samples)
 
     write_csv(request_csv, all_results)
     write_csv(resource_csv, all_samples)
@@ -131,6 +140,7 @@ def main() -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--requests", type=int, default=900, help="requests per scenario/defense pair")
+    parser.add_argument("--runs", type=int, default=1, help="independent repetitions per scenario/defense pair")
     parser.add_argument("--concurrency", type=int, default=96, help="client worker concurrency")
     parser.add_argument("--db-sleep-ms", type=float, default=12.0, help="simulated per-query service time")
     parser.add_argument("--max-connections-per-shard", type=int, default=36)

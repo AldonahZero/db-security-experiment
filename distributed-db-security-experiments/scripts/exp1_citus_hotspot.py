@@ -32,6 +32,7 @@ CONTAINERS = [
 
 @dataclass(frozen=True)
 class CitusRequest:
+    run_id: int
     request_id: int
     scenario: str
     operation: str
@@ -43,6 +44,7 @@ class CitusRequest:
 
 @dataclass
 class CitusResult:
+    run_id: int
     timestamp: str
     start_ts: float
     end_ts: float
@@ -82,7 +84,8 @@ class ConnectionPool:
 
 
 class ResourceSampler:
-    def __init__(self, scenario: str, interval_s: float = 0.5) -> None:
+    def __init__(self, run_id: int, scenario: str, interval_s: float = 0.5) -> None:
+        self.run_id = run_id
         self.scenario = scenario
         self.interval_s = interval_s
         self.samples: List[Dict[str, object]] = []
@@ -98,7 +101,7 @@ class ResourceSampler:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            self.samples.extend(fetch_resource_sample(self.scenario))
+            self.samples.extend(fetch_resource_sample(self.run_id, self.scenario))
             self._stop.wait(self.interval_s)
 
 
@@ -125,34 +128,41 @@ def main() -> int:
 
     dsn = make_dsn(args.host, args.port, args.database, args.user, args.password)
     wait_for_citus(dsn, args.wait_timeout)
-    prepare_schema(dsn, args.shard_count)
 
     all_results: List[Dict[str, object]] = []
     all_samples: List[Dict[str, object]] = []
     all_placements: List[Dict[str, object]] = []
 
-    for scenario in split_arg(args.scenarios, SCENARIOS.keys()):
-        all_placements.extend(fetch_placement_observations(dsn, scenario, "before"))
-        specs = build_workload(scenario, args.requests, args.seed)
-        pool = ConnectionPool(dsn, args.connection_pool_size, args.statement_timeout_ms)
-        sampler = ResourceSampler(scenario, args.sample_interval_s)
-        sampler.start()
-        started = time.time()
-        try:
-            print(f"[citus-exp1] scenario={scenario} requests={len(specs)} concurrency={args.concurrency}", flush=True)
-            results = run_workload(pool, specs, args.concurrency)
-        finally:
-            sampler.stop()
-            pool.close()
-        elapsed = time.time() - started
-        successes = sum(1 for result in results if result.success)
-        print(
-            f"[citus-exp1] done scenario={scenario} elapsed={elapsed:.2f}s success={successes}/{len(results)}",
-            flush=True,
-        )
-        all_results.extend(asdict(result) for result in results)
-        all_samples.extend(sampler.samples)
-        all_placements.extend(fetch_placement_observations(dsn, scenario, "after"))
+    for run_id in range(1, args.runs + 1):
+        print(f"[citus-exp1] run_id={run_id}/{args.runs}", flush=True)
+        prepare_schema(dsn, args.shard_count)
+        for scenario in split_arg(args.scenarios, SCENARIOS.keys()):
+            all_placements.extend(fetch_placement_observations(dsn, run_id, scenario, "before"))
+            specs = build_workload(run_id, scenario, args.requests, args.seed + run_id * 100000)
+            pool = ConnectionPool(dsn, args.connection_pool_size, args.statement_timeout_ms)
+            sampler = ResourceSampler(run_id, scenario, args.sample_interval_s)
+            sampler.start()
+            started = time.time()
+            try:
+                print(
+                    f"[citus-exp1] run_id={run_id} scenario={scenario} "
+                    f"requests={len(specs)} concurrency={args.concurrency}",
+                    flush=True,
+                )
+                results = run_workload(pool, specs, args.concurrency)
+            finally:
+                sampler.stop()
+                pool.close()
+            elapsed = time.time() - started
+            successes = sum(1 for result in results if result.success)
+            print(
+                f"[citus-exp1] done run_id={run_id} scenario={scenario} "
+                f"elapsed={elapsed:.2f}s success={successes}/{len(results)}",
+                flush=True,
+            )
+            all_results.extend(asdict(result) for result in results)
+            all_samples.extend(sampler.samples)
+            all_placements.extend(fetch_placement_observations(dsn, run_id, scenario, "after"))
 
     write_csv(raw_dir / "exp1_citus_hotspot_requests.csv", all_results)
     write_csv(raw_dir / "exp1_citus_resource_samples.csv", all_samples)
@@ -169,6 +179,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--user", default="expuser")
     parser.add_argument("--password", default="exp_pass_123")
     parser.add_argument("--requests", type=int, default=900)
+    parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--concurrency", type=int, default=96)
     parser.add_argument("--connection-pool-size", type=int, default=96)
     parser.add_argument("--statement-timeout-ms", type=int, default=5000)
@@ -273,7 +284,7 @@ def try_execute(cur, sql: str) -> None:
         print(f"[citus-exp1] warning: {sql}: {exc}", flush=True)
 
 
-def build_workload(scenario: str, requests: int, seed: int) -> List[CitusRequest]:
+def build_workload(run_id: int, scenario: str, requests: int, seed: int) -> List[CitusRequest]:
     rng = random.Random(seed + sum(ord(ch) for ch in scenario))
     hot_fraction = SCENARIOS[scenario]
     specs: List[CitusRequest] = []
@@ -282,6 +293,7 @@ def build_workload(scenario: str, requests: int, seed: int) -> List[CitusRequest
         item_id = HOT_KEY if is_hot else rng.randint(1, 30000)
         specs.append(
             CitusRequest(
+                run_id=run_id,
                 request_id=request_id,
                 scenario=scenario,
                 operation=choose_operation(rng),
@@ -349,6 +361,7 @@ def execute_request(pool: ConnectionPool, spec: CitusRequest) -> CitusResult:
             pool.release(conn)
     ended = time.time()
     return CitusResult(
+        run_id=spec.run_id,
         timestamp=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(ended)),
         start_ts=started,
         end_ts=ended,
@@ -368,7 +381,7 @@ def execute_request(pool: ConnectionPool, spec: CitusRequest) -> CitusResult:
     )
 
 
-def fetch_placement_observations(dsn: str, scenario: str, phase: str) -> List[Dict[str, object]]:
+def fetch_placement_observations(dsn: str, run_id: int, scenario: str, phase: str) -> List[Dict[str, object]]:
     rows: List[Dict[str, object]] = []
     conn = psycopg2.connect(dsn)
     conn.autocommit = True
@@ -398,6 +411,7 @@ def fetch_placement_observations(dsn: str, scenario: str, phase: str) -> List[Di
                 {
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     "ts": time.time(),
+                    "run_id": run_id,
                     "system": "PostgreSQL+Citus",
                     "scenario": scenario,
                     "phase": phase,
@@ -413,7 +427,7 @@ def fetch_placement_observations(dsn: str, scenario: str, phase: str) -> List[Di
     return rows
 
 
-def fetch_resource_sample(scenario: str) -> List[Dict[str, object]]:
+def fetch_resource_sample(run_id: int, scenario: str) -> List[Dict[str, object]]:
     stats = docker_stats(CONTAINERS)
     rows: List[Dict[str, object]] = []
     for name in CONTAINERS:
@@ -422,6 +436,7 @@ def fetch_resource_sample(scenario: str) -> List[Dict[str, object]]:
             {
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "ts": time.time(),
+                "run_id": run_id,
                 "system": "PostgreSQL+Citus",
                 "scenario": scenario,
                 "component": "coordinator" if name.endswith("coordinator") else "worker",
