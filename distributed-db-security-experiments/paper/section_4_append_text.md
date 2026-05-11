@@ -14,7 +14,7 @@
 
 在正常均匀流量下，队列隔离/读分流的 QPS 变化为 26.93%，分片级限流的 P95 延迟变化为 -60.33%。这说明防御机制并非无成本：限流、队列调度和读分流会引入一定调度开销，且在参数设置过紧时可能降低正常请求吞吐。因此，单分片泛洪防御应结合业务容量进行阈值校准，而不能只依赖静态规则。
 
-PostgreSQL+Citus 扩展对照实验尚未生成结果；本节先保留脚本和表结构，待镜像与资源就绪后补充实测值。
+PostgreSQL+Citus 对照使用 1 个 coordinator 与 3 个 worker，通过 Citus 扩展将 `citus_items` 和 `citus_events` 按 `item_id` 分布式分片。在 Citus 原生分布式执行路径下，均匀流量 P99 延迟为 1083.19 ms，90% 热点 key 流量 P99 延迟为 894.07 ms，QPS 为 724.64，失败率为 21.67%。90% 热点流量后观测到 32 个 Citus shard，热点 key 所在 worker 为 citus-worker-0。热点期间 PostgreSQL+Citus 峰值 CPU 最高节点为 exp1_citus_worker_2，峰值为 28.26%。
 
 TiDB 对照实验使用 1 个 TiDB Server、3 个 TiKV 和 3 个 PD，通过 `SPLIT TABLE` 将测试表拆分为多个 Region；本次环境中 `SCATTER TABLE` 语句未被当前 TiDB 语法接受，因此以实际采集到的 Region/Leader 分布作为对照观测。在 TiDB 原生调度下，均匀流量 P99 延迟为 3077.36 ms，90% 热点 key 流量 P99 延迟为 5018.63 ms，QPS 为 120.91。90% 热点流量后观测到 9 个表 Region，Leader Store ID 为 1,2,3。热点期间 TiKV 峰值 CPU 最高节点为 exp1_tidb_tikv0，峰值为 26.50%。
 

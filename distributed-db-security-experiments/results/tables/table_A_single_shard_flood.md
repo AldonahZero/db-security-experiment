@@ -19,6 +19,31 @@
 
 注：热点物理负载比为 shard-0 的成功数据库请求量与 shard-1/shard-2 平均请求量之比；队列隔离/读分流组中的缓存命中不计入物理分片请求。
 
+## 表A-2：PostgreSQL+Citus 分布式扩展热点 key 对照
+
+|系统|场景|策略|成功率(%)|失败率(%)|QPS|平均延迟(ms)|P95(ms)|P99(ms)|热点请求占比(%)|Citus分片数|热点分片Worker|
+|---|---|---|---|---|---|---|---|---|---|---|---|
+|PostgreSQL+Citus|均匀流量|Citus 原生分布式扩展|79.89|20.11|464.55|196.05|607.04|1083.19|0.00|32|citus-worker-0|
+|PostgreSQL+Citus|70% 热点流量|Citus 原生分布式扩展|79.67|20.33|578.02|155.75|598.31|927.00|68.78|32|citus-worker-0|
+|PostgreSQL+Citus|90% 热点流量|Citus 原生分布式扩展|78.33|21.67|724.64|119.28|585.76|894.07|90.44|32|citus-worker-0|
+
+## 表A-3：PostgreSQL+Citus 节点负载采样
+
+|场景|节点|组件|平均CPU(%)|峰值CPU(%)|平均内存(MB)|峰值内存(MB)|
+|---|---|---|---|---|---|---|
+|均匀流量|exp1_citus_coordinator|coordinator|155.85|155.85|289.60|289.60|
+|均匀流量|exp1_citus_worker_0|worker|78.79|78.79|161.10|161.10|
+|均匀流量|exp1_citus_worker_1|worker|73.11|73.11|219.40|219.40|
+|均匀流量|exp1_citus_worker_2|worker|63.41|63.41|214.90|214.90|
+|70% 热点流量|exp1_citus_coordinator|coordinator|88.28|88.28|283.10|283.10|
+|70% 热点流量|exp1_citus_worker_0|worker|121.14|121.14|218.10|218.10|
+|70% 热点流量|exp1_citus_worker_1|worker|33.12|33.12|146.30|146.30|
+|70% 热点流量|exp1_citus_worker_2|worker|41.92|41.92|156.40|156.40|
+|90% 热点流量|exp1_citus_coordinator|coordinator|22.19|22.19|280.50|280.50|
+|90% 热点流量|exp1_citus_worker_0|worker|6.06|6.06|230.40|230.40|
+|90% 热点流量|exp1_citus_worker_1|worker|4.22|4.22|86.30|86.30|
+|90% 热点流量|exp1_citus_worker_2|worker|28.26|28.26|90.47|90.47|
+
 ## 表A-4：TiDB 真实分布式数据库热点 key 对照
 
 |系统|场景|策略|成功率(%)|失败率(%)|QPS|平均延迟(ms)|P95(ms)|P99(ms)|热点请求占比(%)|Region数|Leader Store|

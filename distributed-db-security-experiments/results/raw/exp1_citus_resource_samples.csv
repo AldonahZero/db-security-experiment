@@ -1,0 +1,13 @@
+timestamp,ts,system,scenario,component,container,cpu_percent,memory_mb
+2026-05-11T15:23:09+0000,1778512989.652746,PostgreSQL+Citus,citus_uniform,coordinator,exp1_citus_coordinator,155.85,289.6
+2026-05-11T15:23:09+0000,1778512989.6527517,PostgreSQL+Citus,citus_uniform,worker,exp1_citus_worker_0,78.79,161.1
+2026-05-11T15:23:09+0000,1778512989.6527548,PostgreSQL+Citus,citus_uniform,worker,exp1_citus_worker_1,73.11,219.4
+2026-05-11T15:23:09+0000,1778512989.6527567,PostgreSQL+Citus,citus_uniform,worker,exp1_citus_worker_2,63.41,214.9
+2026-05-11T15:23:13+0000,1778512993.6831436,PostgreSQL+Citus,citus_hot70,coordinator,exp1_citus_coordinator,88.28,283.1
+2026-05-11T15:23:13+0000,1778512993.6831498,PostgreSQL+Citus,citus_hot70,worker,exp1_citus_worker_0,121.14,218.1
+2026-05-11T15:23:13+0000,1778512993.6831594,PostgreSQL+Citus,citus_hot70,worker,exp1_citus_worker_1,33.12,146.3
+2026-05-11T15:23:13+0000,1778512993.6831622,PostgreSQL+Citus,citus_hot70,worker,exp1_citus_worker_2,41.92,156.4
+2026-05-11T15:23:17+0000,1778512997.7068377,PostgreSQL+Citus,citus_hot90,coordinator,exp1_citus_coordinator,22.19,280.5
+2026-05-11T15:23:17+0000,1778512997.706849,PostgreSQL+Citus,citus_hot90,worker,exp1_citus_worker_0,6.06,230.4
+2026-05-11T15:23:17+0000,1778512997.7068527,PostgreSQL+Citus,citus_hot90,worker,exp1_citus_worker_1,4.22,86.3
+2026-05-11T15:23:17+0000,1778512997.706855,PostgreSQL+Citus,citus_hot90,worker,exp1_citus_worker_2,28.26,90.47

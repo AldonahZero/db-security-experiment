@@ -374,8 +374,10 @@ def render_table_a(
         "注：热点物理负载比为 shard-0 的成功数据库请求量与 shard-1/shard-2 平均请求量之比；"
         "队列隔离/读分流组中的缓存命中不计入物理分片请求。"
     )
+    section_no = 2
     if not citus_summary.empty:
-        lines.extend(["", "## 表A-2：PostgreSQL+Citus 分布式扩展热点 key 对照", ""])
+        lines.extend(["", f"## 表A-{section_no}：PostgreSQL+Citus 分布式扩展热点 key 对照", ""])
+        section_no += 1
         citus_cols = [
             "系统",
             "场景",
@@ -418,7 +420,8 @@ def render_table_a(
                 + "|"
             )
     if not citus_resource_summary.empty:
-        lines.extend(["", "## 表A-3：PostgreSQL+Citus 节点负载采样", ""])
+        lines.extend(["", f"## 表A-{section_no}：PostgreSQL+Citus 节点负载采样", ""])
+        section_no += 1
         lines.append("|场景|节点|组件|平均CPU(%)|峰值CPU(%)|平均内存(MB)|峰值内存(MB)|")
         lines.append("|---|---|---|---|---|---|---|")
         for _, row in citus_resource_summary.iterrows():
@@ -438,7 +441,8 @@ def render_table_a(
                 + "|"
             )
     if not tidb_summary.empty:
-        lines.extend(["", "## 表A-4：TiDB 真实分布式数据库热点 key 对照", ""])
+        lines.extend(["", f"## 表A-{section_no}：TiDB 真实分布式数据库热点 key 对照", ""])
+        section_no += 1
         tidb_cols = [
             "系统",
             "场景",
@@ -481,7 +485,8 @@ def render_table_a(
                 + "|"
             )
     if not tidb_resource_summary.empty:
-        lines.extend(["", "## 表A-5：TiDB 对照实验 TiKV 负载采样", ""])
+        lines.extend(["", f"## 表A-{section_no}：TiDB 对照实验 TiKV 负载采样", ""])
+        section_no += 1
         lines.append("|场景|TiKV容器|平均CPU(%)|峰值CPU(%)|平均内存(MB)|峰值内存(MB)|")
         lines.append("|---|---|---|---|---|---|")
         for _, row in tidb_resource_summary.iterrows():

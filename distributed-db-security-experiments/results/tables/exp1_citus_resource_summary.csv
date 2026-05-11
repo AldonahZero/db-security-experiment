@@ -1,0 +1,13 @@
+scenario,container,component,avg_cpu_percent,max_cpu_percent,avg_memory_mb,max_memory_mb
+citus_uniform,exp1_citus_coordinator,coordinator,155.85,155.85,289.6,289.6
+citus_uniform,exp1_citus_worker_0,worker,78.79,78.79,161.1,161.1
+citus_uniform,exp1_citus_worker_1,worker,73.11,73.11,219.4,219.4
+citus_uniform,exp1_citus_worker_2,worker,63.41,63.41,214.9,214.9
+citus_hot70,exp1_citus_coordinator,coordinator,88.28,88.28,283.1,283.1
+citus_hot70,exp1_citus_worker_0,worker,121.14,121.14,218.1,218.1
+citus_hot70,exp1_citus_worker_1,worker,33.12,33.12,146.3,146.3
+citus_hot70,exp1_citus_worker_2,worker,41.92,41.92,156.4,156.4
+citus_hot90,exp1_citus_coordinator,coordinator,22.19,22.19,280.5,280.5
+citus_hot90,exp1_citus_worker_0,worker,6.06,6.06,230.4,230.4
+citus_hot90,exp1_citus_worker_1,worker,4.22,4.22,86.3,86.3
+citus_hot90,exp1_citus_worker_2,worker,28.26,28.26,90.47,90.47

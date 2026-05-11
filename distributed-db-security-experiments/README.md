@@ -6,7 +6,7 @@
 
 ### 定位说明
 
-PostgreSQL 原生不提供 TiDB 这类内置分布式分片、Region 或 Leader 调度能力。本实验将 PostgreSQL 相关结果拆成两类：第一类是不使用 Citus、FDW、pg_shard 等扩展的“3 个独立 PostgreSQL 容器 + Python 路由层”机制模拟；第二类是使用   扩展构造 coordinator + worker 拓扑的 PostgreSQL 插件化分布式对照。TiDB 部分则是具备 TiKV、PD、Region/Leader 的真实分布式数据库对照。
+PostgreSQL 原生不提供 TiDB 这类内置分布式分片、Region 或 Leader 调度能力。本实验将 PostgreSQL 相关结果拆成两类：第一类是不使用扩展的“3 个独立 PostgreSQL 容器 + Python 路由层”机制模拟；第二类是使用 Citus 扩展构造 coordinator + worker 拓扑的 PostgreSQL 插件化分布式对照。TiDB 部分则是具备 TiKV、PD、Region/Leader 的真实分布式数据库对照。
 
 ### 环境
 
@@ -15,7 +15,7 @@ PostgreSQL 原生不提供 TiDB 这类内置分布式分片、Region 或 Leader 
 - 分片规则：`item_id % 3`，热点 key 固定路由到 `shard-0`。
 - 资源限制：每个 PostgreSQL 分片限制为 2 vCPU、2 GiB 内存。该配置用于当前服务器可复现实验，报告中不将结果泛化为生产容量。
 - PostgreSQL 18 镜像的数据卷挂载在 `/var/lib/postgresql`，以兼容官方 18+ 镜像的数据目录布局。
-- PostgreSQL+Citus 对照默认使用 `citusdata/citus:12.1` 镜像；如果当前服务器已缓存其他 Citus 镜像，可通过 `CITUS_IMAGE=...` 覆盖。
+- PostgreSQL+Citus 对照默认使用 `citusdata/citus:12.1` 镜像；当前服务器已缓存 `citusdata/citus:12.1.6`，可通过 `CITUS_IMAGE=citusdata/citus:12.1.6` 复用本地镜像。
 
 确认镜像版本：
 
@@ -59,12 +59,14 @@ cd /root/db-security-experiment/distributed-db-security-experiments
 # 首次运行可能需要拉取 citusdata/citus:12.1 镜像
 python3 scripts/exp1_citus_hotspot.py --clean --start-services
 
-# 如果服务器已有其他 Citus 镜像，可指定镜像名，避免拉取默认镜像
-CITUS_IMAGE=your-citus-image:tag python3 scripts/exp1_citus_hotspot.py --clean --start-services
+# 当前服务器可复用已缓存的 citusdata/citus:12.1.6 镜像
+CITUS_IMAGE=citusdata/citus:12.1.6 python3 scripts/exp1_citus_hotspot.py --clean --start-services
 
 # 合并 PostgreSQL 三分片、PostgreSQL+Citus 与 TiDB 结果
 python3 scripts/analyze_results.py
 ```
+
+当前 Tinghua 服务器已使用 `citusdata/citus:12.1.6` 生成 PostgreSQL+Citus 实测 CSV，并已通过 `scripts/analyze_results.py` 合并到表 A、Citus 汇总表和论文补充文字中。
 
 若需要停止 Citus 对照环境：
 
@@ -88,7 +90,7 @@ cd /root/db-security-experiment/distributed-db-security-experiments
 # 首次运行会拉取 pingcap/pd、pingcap/tikv、pingcap/tidb v8.5.0 镜像
 python3 scripts/exp1_tidb_hotspot.py --clean --start-services
 
-# 合并 PostgreSQL 与 TiDB 结果，重新生成表 A 和论文文字
+# 合并 PostgreSQL 三分片、PostgreSQL+Citus 与 TiDB 结果，重新生成表 A 和论文文字
 python3 scripts/analyze_results.py
 ```
 

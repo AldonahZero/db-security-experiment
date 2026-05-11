@@ -111,7 +111,17 @@ def main() -> int:
     if args.clean:
         compose(args.compose_file, ["down", "-v"], root)
     if args.start_services:
-        compose(args.compose_file, ["up", "-d"], root)
+        try:
+            compose(args.compose_file, ["up", "-d"], root)
+        except subprocess.CalledProcessError as exc:
+            print(
+                "[citus-exp1] Citus services did not start. The most common cause in this environment is that "
+                "the Citus Docker image is not cached and the registry mirror times out while pulling it. "
+                "Preload a Citus image on the server or rerun with CITUS_IMAGE=<cached-image:tag>.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return exc.returncode
 
     dsn = make_dsn(args.host, args.port, args.database, args.user, args.password)
     wait_for_citus(dsn, args.wait_timeout)
