@@ -110,7 +110,7 @@ class DefenseController:
         self,
         defense: str,
         hot_keys: Iterable[int],
-        shard_limit: int = 10,
+        shard_limit: int = 36,
         hot_key_limit: int = 2,
         queue_hot_limit: int = 12,
     ) -> None:

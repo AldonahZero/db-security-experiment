@@ -133,7 +133,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--requests", type=int, default=900, help="requests per scenario/defense pair")
     parser.add_argument("--concurrency", type=int, default=96, help="client worker concurrency")
     parser.add_argument("--db-sleep-ms", type=float, default=12.0, help="simulated per-query service time")
-    parser.add_argument("--max-connections-per-shard", type=int, default=24)
+    parser.add_argument("--max-connections-per-shard", type=int, default=36)
     parser.add_argument("--statement-timeout-ms", type=int, default=1200)
     parser.add_argument("--pool-timeout-s", type=float, default=1.0)
     parser.add_argument("--sample-interval-s", type=float, default=0.5)
