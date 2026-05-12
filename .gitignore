@@ -41,3 +41,5 @@ MANIFEST
 logs/
 tmp/
 *.log
+# 忽略大型原始结果文件
+distributed-db-security-experiments/results/raw/
