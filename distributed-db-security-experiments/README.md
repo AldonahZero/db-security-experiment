@@ -111,7 +111,7 @@ docker compose -f docker-compose.tidb.yml down -v
 
 ### 定位说明
 
-本实验不复现、也不声称存在 TiDB 产品级共识漏洞。脚本使用正常 SQL 读写混合负载，通过 `SHOW TABLE ... REGIONS` 定位热点键所在 Region 的初始 Leader Store，并用 PD API 映射到具体 TiKV 容器；随后只在本机受控 Docker Compose 集群中对该 TiKV 容器施加 CPU 压力或网络扰动，观察吞吐量、成功请求 P95/P99 延迟、失败率、TiKV 资源负载、Leader 转移和恢复时间。
+本实验不复现、也不声称存在 TiDB 产品级共识漏洞。脚本使用正常 SQL 读写混合负载，通过 `SHOW TABLE ... REGIONS` 定位热点键所在 Region 的初始 Leader Store，并用 PD API 映射到具体 TiKV 容器；随后只在本机受控 Docker Compose 集群中对该 TiKV 容器施加 CPU 压力或网络扰动，观察吞吐量、成功请求 P95/P99 延迟、失败率、TiKV 资源负载和恢复时间，并保留 Leader 位置变化作为补充观测。
 
 网络扰动优先尝试在目标容器内使用 `tc/netem` 注入延迟、抖动和少量丢包；如果容器缺少 `tc` 或网络管理权限，脚本会自动降级为短时暂停目标 TiKV 容器，并在 `results/raw/exp2_tidb_perturbation_events.csv` 中记录实际方式为 `docker_pause_fallback`。
 
@@ -205,7 +205,7 @@ python3 scripts/analyze_results.py
 - `results/tables/exp2_tidb_leader_summary.csv`：实验二场景级结构化汇总结果。
 - `results/tables/exp2_tidb_leader_phase_summary.csv`：实验二正常期、扰动期和恢复期分阶段汇总。
 - `results/tables/exp2_tidb_tikv_resource_summary.csv`：实验二 TiKV 资源采样汇总。
-- `results/tables/exp2_tidb_leader_transfer_summary.csv`：实验二 Leader 转移观测汇总。
+- `results/tables/exp2_tidb_leader_transfer_summary.csv`：实验二 Leader 位置变化补充观测汇总。
 - `results/tables/table_C_cross_shard_frontrun.md`：论文可用表 C，汇总跨分片事务抢占式提交模拟结果。
 - `results/tables/exp3_cross_shard_frontrun_summary.csv`：实验三结构化汇总结果，包含均值、标准差和 95% 置信区间半宽。
 - `results/figures/exp1_shard_load_changes.png`：90% 热点流量下各分片物理负载对比图，误差线表示 95% 置信区间。

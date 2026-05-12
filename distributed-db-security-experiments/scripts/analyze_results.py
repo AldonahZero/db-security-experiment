@@ -1238,7 +1238,7 @@ def render_table_b(exp2_summary: pd.DataFrame) -> str:
     lines = [
         "# 表B：TiDB Leader 压力/网络扰动下的可用性与恢复评估",
         "",
-        "注：表中数值为 5 次重复实验的均值±标准差；扰动对象为热点 Region 初始 Leader 所在 TiKV 节点。",
+        "注：表中数值为 5 次重复实验的均值；扰动对象为热点 Region 初始 Leader 所在 TiKV 节点，更详细的重复实验统计见结构化汇总 CSV。",
         "",
     ]
     cols = [
@@ -1253,7 +1253,6 @@ def render_table_b(exp2_summary: pd.DataFrame) -> str:
         "正常期成功请求P99(ms)",
         "扰动期成功请求P99(ms)",
         "恢复时间(s)",
-        "Leader转移率(%)",
     ]
     lines.append("|" + "|".join(cols) + "|")
     lines.append("|" + "|".join(["---"] * len(cols)) + "|")
@@ -1264,7 +1263,7 @@ def render_table_b(exp2_summary: pd.DataFrame) -> str:
         "leader_cpu_stress_limited",
     ]
     if exp2_summary.empty:
-        lines.append("|尚未生成实验二结果|-|-|-|-|-|-|-|-|-|-|-|")
+        lines.append("|尚未生成实验二结果|-|-|-|-|-|-|-|-|-|-|")
     else:
         lookup = exp2_summary.set_index("scenario")
         for scenario in order:
@@ -1279,14 +1278,13 @@ def render_table_b(exp2_summary: pd.DataFrame) -> str:
                         EXP2_MITIGATION_LABELS.get(str(row.get("mitigation", "")), str(row.get("mitigation", ""))),
                         EXP2_METHOD_LABELS.get(str(row.get("perturbation_method", "")), str(row.get("perturbation_method", ""))),
                         node_label(row.get("target_container", "")),
-                        fmt_pm(row, "normal_success_qps"),
-                        fmt_pm(row, "perturb_success_qps"),
-                        fmt_pm(row, "throughput_drop_pct"),
-                        fmt_pm(row, "perturb_failure_rate_pct"),
-                        fmt_pm(row, "normal_p99_latency_ms"),
-                        fmt_pm(row, "perturb_p99_latency_ms"),
-                        fmt_pm(row, "recovery_time_s"),
-                        fmt_pm(row, "leader_transfer_rate_pct"),
+                        fmt(row.get("normal_success_qps")),
+                        fmt(row.get("perturb_success_qps")),
+                        fmt(row.get("throughput_drop_pct")),
+                        fmt(row.get("perturb_failure_rate_pct")),
+                        fmt(row.get("normal_p99_latency_ms")),
+                        fmt(row.get("perturb_p99_latency_ms")),
+                        fmt(row.get("recovery_time_s")),
                     ]
                 )
                 + "|"
@@ -1306,7 +1304,7 @@ def render_table_c(exp3_summary: pd.DataFrame) -> str:
     lines = [
         "# 表C：跨分片事务异步窗口下的抢占式提交模拟结果",
         "",
-        "注：表中数值为 5 次重复实验的均值±标准差；场景为 victim 先到、attacker 后到，victim 在用户校验后存在人为异步窗口。",
+        "注：表中数值为 5 次重复实验的均值；场景为 victim 先到、attacker 后到，victim 在用户校验后存在人为异步窗口，更详细的重复实验统计见结构化汇总 CSV。",
         "",
     ]
     cols = [
@@ -1333,15 +1331,15 @@ def render_table_c(exp3_summary: pd.DataFrame) -> str:
             + "|".join(
                 [
                     EXP3_DEFENSE_LABELS.get(defense, defense),
-                    fmt_pm(row, "front_run_success_pct"),
-                    fmt_pm(row, "consistency_violation_pct"),
-                    fmt_pm(row, "rollback_rate_pct"),
-                    fmt_pm(row, "success_rate_pct"),
-                    fmt_pm(row, "throughput_txn_s"),
-                    fmt_pm(row, "avg_latency_ms"),
-                    fmt_pm(row, "p95_latency_ms"),
-                    fmt_pm(row, "p99_latency_ms"),
-                    fmt_pm(row, "p95_latency_overhead_pct"),
+                    fmt(row.get("front_run_success_pct")),
+                    fmt(row.get("consistency_violation_pct")),
+                    fmt(row.get("rollback_rate_pct")),
+                    fmt(row.get("success_rate_pct")),
+                    fmt(row.get("throughput_txn_s")),
+                    fmt(row.get("avg_latency_ms")),
+                    fmt(row.get("p95_latency_ms")),
+                    fmt(row.get("p99_latency_ms")),
+                    fmt(row.get("p95_latency_overhead_pct")),
                 ]
             )
             + "|"
@@ -1944,14 +1942,6 @@ def render_paper_text(
             if "leader_cpu_stress_limited" in exp2_lookup.index
             else math.nan
         )
-        transfer_text = ""
-        if "leader_cpu_stress" in exp2_lookup.index:
-            transfer_text = (
-                f"CPU 压力组 Leader 转移发生率为 {e('leader_cpu_stress', 'leader_transfer_rate_pct'):.2f}%，"
-                f"网络扰动组 Leader 转移发生率为 {e('leader_network_perturbation', 'leader_transfer_rate_pct'):.2f}%"
-                if "leader_network_perturbation" in exp2_lookup.index
-                else f"CPU 压力组 Leader 转移发生率为 {e('leader_cpu_stress', 'leader_transfer_rate_pct'):.2f}%"
-            )
         peak_text = ""
         if not exp2_resource_summary.empty:
             target_samples = exp2_resource_summary[
@@ -1969,13 +1959,13 @@ def render_paper_text(
 
 ### 实验动机与设计
 
-第2章指出，基于 Leader 的共识复制和副本调度机制是分布式数据库区别于单机数据库的重要安全边界。为避免将受控实验表述为产品漏洞复现，本文将实验二定位为“共识 Leader 节点压力攻击与网络扰动下的可用性评估”。实验使用同一 TiDB 集群，通过 `SHOW TABLE ... REGIONS` 定位热点键所在 Region 的初始 Leader Store，并由 PD API 映射到具体 TiKV 容器。随后在正常基线、Leader CPU 压力、Leader 网络扰动以及 CPU 压力下应用侧限流四组场景中运行相同读写混合负载，记录正常期、扰动期和恢复期的吞吐量、成功请求平均延迟、成功请求 P95/P99 延迟、失败率、TiKV CPU/内存、Leader 是否转移以及恢复时间。每组场景独立重复运行 5 次，折线图以 95% 置信区间阴影展示成功请求 P99 延迟恢复曲线。
+第2章指出，基于 Leader 的共识复制和副本调度机制是分布式数据库区别于单机数据库的重要安全边界。为避免将受控实验表述为产品漏洞复现，本文将实验二定位为“共识 Leader 节点压力攻击与网络扰动下的可用性评估”。实验使用同一 TiDB 集群，通过 `SHOW TABLE ... REGIONS` 定位热点键所在 Region 的初始 Leader Store，并由 PD API 映射到具体 TiKV 容器。随后在正常基线、Leader CPU 压力、Leader 网络扰动以及 CPU 压力下应用侧限流四组场景中运行相同读写混合负载，记录正常期、扰动期和恢复期的吞吐量、成功请求平均延迟、成功请求 P95/P99 延迟、失败率、TiKV CPU/内存和恢复时间，并保留 Leader 位置变化作为补充观测。每组场景独立重复运行 5 次，折线图以 95% 置信区间阴影展示成功请求 P99 延迟恢复曲线。
 
 ### 结果与分析
 
-在 Leader CPU 压力组中，扰动期成功吞吐量相对正常期下降 {cpu_drop:.2f}%，成功请求 P99 延迟由 {cpu_normal_p99:.2f} ms 上升到 {cpu_perturb_p99:.2f} ms，恢复到正常期 90% 吞吐且成功请求 P99 不高于正常期 110% 的时间为 {cpu_recovery_time:.2f} s。网络扰动组的成功吞吐量下降 {network_drop:.2f}%，扰动期失败率为 {network_fail:.2f}%，恢复时间为 {network_recovery_time:.2f} s。应用侧限流组在相同 CPU 压力下注入下的成功吞吐量下降为 {limited_drop:.2f}%，扰动期成功请求 P99 延迟为 {limited_p99:.2f} ms，说明限流能够降低部分尾延迟压力，但会以主动压低吞吐作为代价。{transfer_text}。{peak_text}
+在 Leader CPU 压力组中，扰动期成功吞吐量相对正常期下降 {cpu_drop:.2f}%，成功请求 P99 延迟由 {cpu_normal_p99:.2f} ms 上升到 {cpu_perturb_p99:.2f} ms，恢复到正常期 90% 吞吐且成功请求 P99 不高于正常期 110% 的时间为 {cpu_recovery_time:.2f} s。网络扰动组的成功吞吐量下降 {network_drop:.2f}%，扰动期失败率为 {network_fail:.2f}%，恢复时间为 {network_recovery_time:.2f} s。应用侧限流组在相同 CPU 压力下注入下的成功吞吐量下降为 {limited_drop:.2f}%，扰动期成功请求 P99 延迟为 {limited_p99:.2f} ms，说明限流能够降低部分尾延迟压力，但会以主动压低吞吐作为代价。{peak_text}
 
-该结果表明，Leader 所在节点遭遇资源压力或网络扰动时，即使请求本身仍是合法 SQL，系统可用性也会出现可观退化；TiDB/PD 的调度、Leader 转移和客户端限流可以缓解影响，但恢复过程存在非零时间窗口。因此，分布式数据库安全评估不能只覆盖应用层注入或认证问题，也需要纳入共识层和调度层韧性指标。
+该结果表明，Leader 所在节点遭遇资源压力或网络扰动时，即使请求本身仍是合法 SQL，系统可用性也会出现可观退化；客户端限流和集群恢复机制可以缓解部分影响，但恢复过程存在非零时间窗口。因此，分布式数据库安全评估不能只覆盖应用层注入或认证问题，也需要纳入共识层和调度层韧性指标。
 """
 
     exp3_text = ""
@@ -2050,7 +2040,7 @@ def render_paper_text(
 def render_reviewer_response(has_exp2: bool, has_exp3: bool) -> str:
     exp2_sentence = (
         "同时，本文新增“TiDB 共识 Leader 压力/网络扰动下的可用性与恢复评估”，"
-        "通过定位热点 Region Leader 所在 TiKV 节点并注入 CPU 压力或网络扰动，量化正常期、扰动期和恢复期的吞吐量、尾延迟、失败率、Leader 转移和恢复时间。"
+        "通过定位热点 Region Leader 所在 TiKV 节点并注入 CPU 压力或网络扰动，量化正常期、扰动期和恢复期的吞吐量、尾延迟、失败率和恢复时间，并保留 Leader 位置变化作为补充观测。"
         if has_exp2
         else "TiDB 共识 Leader 压力/网络扰动实验脚本和表结构已补充，待受控环境资源就绪后填入实测结果。"
     )
