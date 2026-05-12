@@ -92,6 +92,16 @@ EXP2_METHOD_LABELS = {
     "tc_netem_failed": "tc/netem失败",
 }
 
+EXP3_DEFENSE_LABELS = {
+    "baseline": "无防御",
+    "global_sequence": "全局序列号",
+    "occ": "版本检查/OCC",
+    "conflict_key_queue": "冲突键队列化",
+    "two_phase_commit": "两阶段提交模拟",
+}
+
+EXP3_DEFENSE_ORDER = ["baseline", "global_sequence", "occ", "conflict_key_queue", "two_phase_commit"]
+
 
 def main() -> int:
     args = parse_args()
@@ -175,8 +185,21 @@ def main() -> int:
             exp2_leader_summary = summarize_exp2_leaders(exp2_leaders)
             write_chinese_csv(exp2_leader_summary, table_dir / "exp2_tidb_leader_transfer_summary.csv", "exp2_leader")
 
+    exp3_summary = pd.DataFrame()
+    exp3_txn_path = root / args.exp3_transactions_csv
+    exp3_pair_path = root / args.exp3_pairs_csv
+    if exp3_txn_path.exists() and exp3_pair_path.exists():
+        exp3_transactions = pd.read_csv(exp3_txn_path)
+        exp3_pairs = pd.read_csv(exp3_pair_path)
+        exp3_summary = summarize_exp3(exp3_transactions, exp3_pairs)
+        write_chinese_csv(exp3_summary, table_dir / "exp3_cross_shard_frontrun_summary.csv", "exp3_summary")
+        table_c_path = table_dir / "table_C_cross_shard_frontrun.md"
+        table_c_path.write_text(render_table_c(exp3_summary), encoding="utf-8")
+        render_exp3_figure(exp3_summary, figure_dir / "exp3_frontrun_defense_overhead.png")
+
     table_md = render_table_a(
         summary,
+        citus_summary,
         tidb_summary,
     )
     table_path = table_dir / "table_A_single_shard_flood.md"
@@ -209,12 +232,16 @@ def main() -> int:
             tidb_region_summary,
             exp2_summary,
             exp2_resource_summary,
+            exp3_summary,
         ),
         encoding="utf-8",
     )
 
     reviewer_path = paper_dir / "reviewer_response.md"
-    reviewer_path.write_text(render_reviewer_response(not exp2_summary.empty), encoding="utf-8")
+    reviewer_path.write_text(
+        render_reviewer_response(not exp2_summary.empty, exp3_is_complete(exp3_summary)),
+        encoding="utf-8",
+    )
 
     print(f"[analyze] wrote {summary_path}")
     print(f"[analyze] wrote {table_path}")
@@ -224,6 +251,9 @@ def main() -> int:
     if not exp2_summary.empty:
         print(f"[analyze] wrote {table_dir / 'table_B_tidb_leader_stress.md'}")
         print(f"[analyze] wrote {figure_dir / 'exp2_tidb_p99_recovery_curve.png'}")
+    if not exp3_summary.empty:
+        print(f"[analyze] wrote {table_dir / 'table_C_cross_shard_frontrun.md'}")
+        print(f"[analyze] wrote {figure_dir / 'exp3_frontrun_defense_overhead.png'}")
     print(f"[analyze] wrote {reviewer_path}")
     return 0
 
@@ -245,6 +275,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--exp2-resource-csv", default="results/raw/exp2_tidb_tikv_resource_samples.csv")
     parser.add_argument("--exp2-leader-csv", default="results/raw/exp2_tidb_leader_observations.csv")
     parser.add_argument("--exp2-events-csv", default="results/raw/exp2_tidb_perturbation_events.csv")
+    parser.add_argument("--exp3-transactions-csv", default="results/raw/exp3_cross_shard_transactions.csv")
+    parser.add_argument("--exp3-pairs-csv", default="results/raw/exp3_cross_shard_pairs.csv")
     return parser.parse_args()
 
 
@@ -359,7 +391,7 @@ def write_chinese_csv(df: pd.DataFrame, output: Path, kind: str) -> None:
         "citus_placement": {
             "run_count": "重复次数",
             "scenario": "场景",
-            "shard_count": "Citus分片数",
+            "shard_count": "Citus逻辑分片数",
             "worker_count": "工作节点数",
             "hotspot_shard_id": "热点分片编号",
             "hotspot_worker": "热点分片所在工作节点",
@@ -458,6 +490,26 @@ def write_chinese_csv(df: pd.DataFrame, output: Path, kind: str) -> None:
             "target_container": "初始目标Leader节点",
             "hot_leader_container": "当前热点Leader节点",
         },
+        "exp3_summary": {
+            "run_count": "重复次数",
+            "defense": "防御策略",
+            "pairs": "事务对数",
+            "transactions": "事务数",
+            "front_run_success_pct": "抢占式提交成功率(%)",
+            "order_violation_pct": "顺序违规率(%)",
+            "consistency_violation_pct": "一致性违规率(%)",
+            "oversell_pct": "库存超卖率(%)",
+            "rollback_rate_pct": "事务回滚率(%)",
+            "success_rate_pct": "事务成功率(%)",
+            "throughput_txn_s": "吞吐量(事务/秒)",
+            "successful_order_throughput_s": "成功订单吞吐量(订单/秒)",
+            "avg_latency_ms": "平均延迟(ms)",
+            "p95_latency_ms": "P95延迟(ms)",
+            "p99_latency_ms": "P99延迟(ms)",
+            "avg_wait_ms": "平均等待时间(ms)",
+            "p95_latency_overhead_pct": "P95延迟开销(%)",
+            "throughput_change_pct": "吞吐量变化(%)",
+        },
     }
     base_map = column_maps[kind]
     rename_map = {}
@@ -485,7 +537,10 @@ def scenario_label(value: object) -> str:
 
 def defense_label(value: object) -> str:
     text = str(value)
-    return DEFENSE_LABELS.get(text, CITUS_DEFENSE_LABELS.get(text, TIDB_DEFENSE_LABELS.get(text, str(value))))
+    return DEFENSE_LABELS.get(
+        text,
+        CITUS_DEFENSE_LABELS.get(text, TIDB_DEFENSE_LABELS.get(text, EXP3_DEFENSE_LABELS.get(text, str(value)))),
+    )
 
 
 def node_label(value: object) -> str:
@@ -925,6 +980,12 @@ def safe_pct_drop(before: object, after: object) -> float:
         return math.nan
 
 
+def exp3_is_complete(exp3_summary: pd.DataFrame) -> bool:
+    if exp3_summary.empty or "defense" not in exp3_summary.columns:
+        return False
+    return set(EXP3_DEFENSE_ORDER).issubset(set(exp3_summary["defense"].astype(str)))
+
+
 def compute_recovery_time(group: pd.DataFrame, normal: Dict[str, float]) -> float:
     if group.empty or "recovery" not in set(group["phase"].astype(str)):
         return 0.0
@@ -988,6 +1049,63 @@ def summarize_exp2_leaders(df: pd.DataFrame) -> pd.DataFrame:
     return aggregate_repeated_runs(pd.DataFrame(rows), ["scenario", "phase"])
 
 
+def summarize_exp3(transactions: pd.DataFrame, pairs: pd.DataFrame) -> pd.DataFrame:
+    transactions = ensure_run_id(transactions)
+    pairs = ensure_run_id(pairs)
+    rows: List[Dict[str, object]] = []
+    for (run_id, defense), txn_group in transactions.groupby(["run_id", "defense"], sort=False):
+        pair_group = pairs[(pairs["run_id"] == run_id) & (pairs["defense"] == defense)]
+        duration = max(txn_group["end_ts"].max() - txn_group["start_ts"].min(), 0.001)
+        latencies = txn_group["latency_ms"].astype(float)
+        success = txn_group[txn_group["success"] == True]  # noqa: E712
+        rollback = txn_group[txn_group["rollback"] == True]  # noqa: E712
+        rows.append(
+            {
+                "run_id": run_id,
+                "defense": defense,
+                "pairs": int(len(pair_group)),
+                "transactions": int(len(txn_group)),
+                "front_run_success_pct": bool_pct(pair_group, "front_run_success"),
+                "order_violation_pct": bool_pct(pair_group, "order_violation"),
+                "consistency_violation_pct": bool_pct(pair_group, "consistency_violation"),
+                "oversell_pct": bool_pct(pair_group, "oversell"),
+                "rollback_rate_pct": pct(len(rollback), len(txn_group)),
+                "success_rate_pct": pct(len(success), len(txn_group)),
+                "throughput_txn_s": len(txn_group) / duration,
+                "successful_order_throughput_s": len(success) / duration,
+                "avg_latency_ms": latencies.mean(),
+                "p95_latency_ms": latencies.quantile(0.95),
+                "p99_latency_ms": latencies.quantile(0.99),
+                "avg_wait_ms": txn_group["wait_ms"].astype(float).mean() if "wait_ms" in txn_group.columns else 0.0,
+            }
+        )
+    per_run = pd.DataFrame(rows)
+    per_run["p95_latency_overhead_pct"] = math.nan
+    per_run["throughput_change_pct"] = math.nan
+    for run_id, group in per_run.groupby("run_id", sort=False):
+        lookup = group.set_index("defense")
+        if "baseline" not in lookup.index:
+            continue
+        base_p95 = float(lookup.loc["baseline", "p95_latency_ms"])
+        base_throughput = float(lookup.loc["baseline", "throughput_txn_s"])
+        mask = per_run["run_id"] == run_id
+        if base_p95 > 0:
+            per_run.loc[mask, "p95_latency_overhead_pct"] = (
+                (per_run.loc[mask, "p95_latency_ms"] - base_p95) / base_p95 * 100.0
+            )
+        if base_throughput > 0:
+            per_run.loc[mask, "throughput_change_pct"] = (
+                (per_run.loc[mask, "throughput_txn_s"] - base_throughput) / base_throughput * 100.0
+            )
+    return aggregate_repeated_runs(per_run, ["defense"])
+
+
+def bool_pct(df: pd.DataFrame, column: str) -> float:
+    if df.empty or column not in df.columns:
+        return 0.0
+    return pct(int(df[column].sum()), len(df))
+
+
 def clean_id(value) -> str:
     text = str(value)
     if text.endswith(".0"):
@@ -997,34 +1115,36 @@ def clean_id(value) -> str:
 
 def render_table_a(
     summary: pd.DataFrame,
+    citus_summary: pd.DataFrame,
     tidb_summary: pd.DataFrame,
 ) -> str:
     lines = [
         "# 表A：单分片泛洪攻击与防御效果评估",
         "",
-        "注：表中数值为 5 次重复实验的均值，完整均值±标准差结果见补充材料。",
-        "",
     ]
     cols = [
         "实验环境",
         "热点比例",
-        "防御策略",
+        "策略",
         "成功率(%)",
         "限流率/失败率(%)",
-        "业务成功吞吐量(请求/s)",
+        "吞吐量(请求/s)",
         "平均延迟(ms)",
         "P99延迟(ms)",
-        "热点负载比",
     ]
     lines.append("|" + "|".join(cols) + "|")
-    lines.append("|---|---:|---|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---|---:|---|---:|---:|---:|---:|---:|")
 
     lookup = summary.set_index(["scenario", "defense"])
     postgres_rows = [
         ("uniform", "baseline", "0%"),
         ("hot70", "baseline", "70%"),
+        ("hot70", "shard_limit", "70%"),
+        ("hot70", "hot_key_limit", "70%"),
         ("hot70", "queue_isolation", "70%"),
         ("hot90", "baseline", "90%"),
+        ("hot90", "shard_limit", "90%"),
+        ("hot90", "hot_key_limit", "90%"),
         ("hot90", "queue_isolation", "90%"),
     ]
     for scenario, defense, hotspot_pct in postgres_rows:
@@ -1040,14 +1160,41 @@ def render_table_a(
                     DEFENSE_LABELS.get(defense, defense),
                     fmt(row["success_rate_pct"]),
                     fmt(row["rate_limited_pct"]),
-                    fmt(row["success_qps"]),
+                    fmt(row["qps"]),
                     fmt(row["avg_latency_ms"]),
                     fmt(row["p99_latency_ms"]),
-                    fmt(row["hot_physical_load_ratio"]),
                 ]
             )
             + "|"
         )
+
+    if not citus_summary.empty:
+        citus_lookup = citus_summary.set_index("scenario")
+        citus_rows = [
+            ("citus_uniform", "0%"),
+            ("citus_hot70", "70%"),
+            ("citus_hot90", "90%"),
+        ]
+        for scenario, hotspot_pct in citus_rows:
+            if scenario not in citus_lookup.index:
+                continue
+            row = citus_lookup.loc[scenario]
+            lines.append(
+                "|"
+                + "|".join(
+                    [
+                        "PostgreSQL+Citus",
+                        hotspot_pct,
+                        "原生分布式扩展",
+                        fmt(row["success_rate_pct"]),
+                        fmt(row["failure_rate_pct"]),
+                        fmt(row["qps"]),
+                        fmt(row["avg_latency_ms"]),
+                        fmt(row["p99_latency_ms"]),
+                    ]
+                )
+                + "|"
+            )
 
     if not tidb_summary.empty:
         tidb_lookup = tidb_summary.set_index("scenario")
@@ -1069,10 +1216,9 @@ def render_table_a(
                         "原生调度",
                         fmt(row["success_rate_pct"]),
                         fmt(row["failure_rate_pct"]),
-                        fmt(row["success_qps"]),
+                        fmt(row["qps"]),
                         fmt(row["avg_latency_ms"]),
                         fmt(row["p99_latency_ms"]),
-                        "-",
                     ]
                 )
                 + "|"
@@ -1081,9 +1227,8 @@ def render_table_a(
     lines.extend(
         [
             "",
-            "注：PostgreSQL 三分片的“限流率/失败率”列为限流率，TiDB 行为失败率；"
-            "业务成功吞吐量仅统计成功完成的数据库请求，避免快速拒绝请求抬高总处理吞吐量。"
-            "热点负载比为分片0的成功数据库请求量与分片1、分片2平均请求量之比。",
+            "注：表中数值为多次重复实验的均值；限流/失败率在 PostgreSQL 三分片中表示被主动限流的请求比例，在 Citus/TiDB 中表示失败请求比例。"
+            "吞吐量为系统处理请求吞吐，包含被快速拒绝的限流请求；完整均值±标准差和资源采样结果见补充材料。",
         ]
     )
     return "\n".join(lines)
@@ -1152,6 +1297,60 @@ def render_table_b(exp2_summary: pd.DataFrame) -> str:
             "注：若容器环境不支持 `tc/netem` 或缺少网络管理权限，网络扰动组自动降级为短时暂停目标 TiKV 容器，"
             "并在“扰动方式”列中记录为“容器暂停降级模拟”。P99 延迟按成功请求统计，失败请求通过失败率单独报告；"
             "恢复时间按恢复期内成功吞吐量达到正常期 90% 且成功请求 P99 延迟不高于正常期 110% 的最早时间估算。",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def render_table_c(exp3_summary: pd.DataFrame) -> str:
+    lines = [
+        "# 表C：跨分片事务异步窗口下的抢占式提交模拟结果",
+        "",
+        "注：表中数值为 5 次重复实验的均值±标准差；场景为 victim 先到、attacker 后到，victim 在用户校验后存在人为异步窗口。",
+        "",
+    ]
+    cols = [
+        "防御策略",
+        "抢占式提交成功率(%)",
+        "一致性违规率(%)",
+        "事务回滚率(%)",
+        "事务成功率(%)",
+        "吞吐量(事务/秒)",
+        "平均延迟(ms)",
+        "P95延迟(ms)",
+        "P99延迟(ms)",
+        "P95延迟开销(%)",
+    ]
+    lines.append("|" + "|".join(cols) + "|")
+    lines.append("|" + "|".join(["---"] * len(cols)) + "|")
+    lookup = exp3_summary.set_index("defense") if not exp3_summary.empty else pd.DataFrame()
+    for defense in EXP3_DEFENSE_ORDER:
+        if exp3_summary.empty or defense not in lookup.index:
+            continue
+        row = lookup.loc[defense]
+        lines.append(
+            "|"
+            + "|".join(
+                [
+                    EXP3_DEFENSE_LABELS.get(defense, defense),
+                    fmt_pm(row, "front_run_success_pct"),
+                    fmt_pm(row, "consistency_violation_pct"),
+                    fmt_pm(row, "rollback_rate_pct"),
+                    fmt_pm(row, "success_rate_pct"),
+                    fmt_pm(row, "throughput_txn_s"),
+                    fmt_pm(row, "avg_latency_ms"),
+                    fmt_pm(row, "p95_latency_ms"),
+                    fmt_pm(row, "p99_latency_ms"),
+                    fmt_pm(row, "p95_latency_overhead_pct"),
+                ]
+            )
+            + "|"
+        )
+    lines.extend(
+        [
+            "",
+            "注：一致性违规率表示业务语义层面的顺序反转比例，不等同于数据库物理一致性破坏；"
+            "库存初始值为 2，因此本实验主要观察后到事务先完成库存扣减和订单确认，而非库存超卖。",
         ]
     )
     return "\n".join(lines)
@@ -1230,7 +1429,7 @@ def render_supplemental_table_a(
             "P95延迟(ms)",
             "P99延迟(ms)",
             "热点请求占比(%)",
-            "Citus分片数",
+            "Citus逻辑分片数",
             "热点分片所在工作节点",
         ]
         lines.append("|" + "|".join(citus_cols) + "|")
@@ -1541,6 +1740,49 @@ def render_exp2_recovery_figure(df: pd.DataFrame, output: Path) -> None:
     plt.close()
 
 
+def render_exp3_figure(summary: pd.DataFrame, output: Path) -> None:
+    if summary.empty:
+        return
+    data = summary.set_index("defense").reindex(EXP3_DEFENSE_ORDER).dropna(how="all")
+    x = range(len(data.index))
+    labels = [EXP3_DEFENSE_LABELS.get(item, item) for item in data.index]
+
+    fig, axes = plt.subplots(1, 2, figsize=(11.0, 4.8))
+    front = data["front_run_success_pct"].astype(float)
+    front_ci = data["front_run_success_pct_ci95"].fillna(0).astype(float)
+    axes[0].bar(
+        list(x),
+        front.values,
+        yerr=clipped_yerr(front, front_ci),
+        capsize=4,
+        color="#C94C4C",
+    )
+    axes[0].set_title("抢占式提交成功率")
+    axes[0].set_ylabel("成功率(%)")
+    axes[0].set_xticks(list(x), labels, rotation=20, ha="right")
+    axes[0].set_ylim(bottom=0)
+
+    overhead = data["p95_latency_overhead_pct"].astype(float)
+    overhead_ci = data["p95_latency_overhead_pct_ci95"].fillna(0).astype(float)
+    colors = ["#9E9E9E" if value < 0 else "#4C78A8" for value in overhead.values]
+    axes[1].bar(
+        list(x),
+        overhead.values,
+        yerr=overhead_ci.values,
+        capsize=4,
+        color=colors,
+    )
+    axes[1].axhline(0, color="#333333", linewidth=1)
+    axes[1].set_title("P95延迟开销")
+    axes[1].set_ylabel("相对无防御变化(%)")
+    axes[1].set_xticks(list(x), labels, rotation=20, ha="right")
+
+    fig.suptitle("跨分片抢占式提交成功率与防御开销（误差线为95%置信区间）")
+    fig.tight_layout()
+    fig.savefig(output, dpi=180)
+    plt.close(fig)
+
+
 def render_citus_worker_figure(df: pd.DataFrame, output: Path) -> None:
     if df.empty:
         return
@@ -1589,6 +1831,7 @@ def render_paper_text(
     tidb_region_summary: pd.DataFrame,
     exp2_summary: pd.DataFrame,
     exp2_resource_summary: pd.DataFrame,
+    exp3_summary: pd.DataFrame,
 ) -> str:
     lookup = summary.set_index(["scenario", "defense"])
 
@@ -1616,7 +1859,7 @@ def render_paper_text(
             placement_lookup = citus_placement_summary.set_index("scenario")
             if "citus_hot90" in placement_lookup.index:
                 placement_text = (
-                    f"90% 热点流量后观测到 {fmt_count(placement_lookup.loc['citus_hot90', 'shard_count'])} 个 Citus 分片，"
+                    f"90% 热点流量后观测到 {fmt_count(placement_lookup.loc['citus_hot90', 'shard_count'])} 个 Citus 逻辑分片，"
                     f"热点键所在工作节点为 {node_list_label(placement_lookup.loc['citus_hot90', 'hotspot_worker'])}"
                 )
         citus_resource_text = ""
@@ -1735,6 +1978,45 @@ def render_paper_text(
 该结果表明，Leader 所在节点遭遇资源压力或网络扰动时，即使请求本身仍是合法 SQL，系统可用性也会出现可观退化；TiDB/PD 的调度、Leader 转移和客户端限流可以缓解影响，但恢复过程存在非零时间窗口。因此，分布式数据库安全评估不能只覆盖应用层注入或认证问题，也需要纳入共识层和调度层韧性指标。
 """
 
+    exp3_text = ""
+    if not exp3_summary.empty:
+        exp3_lookup = exp3_summary.set_index("defense")
+        missing_defenses = [defense for defense in EXP3_DEFENSE_ORDER if defense not in exp3_lookup.index]
+        if missing_defenses:
+            available = "、".join(EXP3_DEFENSE_LABELS.get(str(value), str(value)) for value in exp3_lookup.index)
+            missing = "、".join(EXP3_DEFENSE_LABELS.get(value, value) for value in missing_defenses)
+            exp3_text = f"""
+## 实验三：跨分片事务异步窗口下的抢占式提交模拟
+
+当前跨分片事务异步窗口实验已生成部分结果，已包含策略为 {available}；尚缺少 {missing} 的完整重复实验结果。因此，本文暂不基于该组不完整数据展开定量结论，完整结果补齐后再并入正文分析。
+"""
+        else:
+
+            def c(defense: str, column: str) -> float:
+                return float(exp3_lookup.loc[defense, column])
+
+            baseline_front = c("baseline", "front_run_success_pct")
+            baseline_violation = c("baseline", "consistency_violation_pct")
+            global_front = c("global_sequence", "front_run_success_pct")
+            occ_front = c("occ", "front_run_success_pct")
+            queue_front = c("conflict_key_queue", "front_run_success_pct")
+            two_pc_front = c("two_phase_commit", "front_run_success_pct")
+            global_overhead = c("global_sequence", "p95_latency_overhead_pct")
+            occ_rollback = c("occ", "rollback_rate_pct")
+            queue_overhead = c("conflict_key_queue", "p95_latency_overhead_pct")
+            two_pc_overhead = c("two_phase_commit", "p95_latency_overhead_pct")
+            exp3_text = f"""
+## 实验三：跨分片事务异步窗口下的抢占式提交模拟
+
+### 实验动机与设计
+
+跨分片事务在用户校验、库存扣减和订单确认之间需要经过多个分片，处理阶段与提交阶段之间天然存在异步窗口。本文使用 PostgreSQL 三分片环境构造可控模拟：shard-0 存放用户资格，shard-1 存放商品库存，shard-2 存放订单确认。每个事务对包含先到达的 `T_victim` 和后到达的 `T_attacker`，其中 `T_victim` 在完成用户资格校验后被人为延迟，`T_attacker` 在该窗口内尝试先完成库存扣减和订单写入。实验比较无防御、全局序列号、版本检查/OCC、冲突键队列化和两阶段提交模拟五组策略。每组策略独立重复运行 5 次，记录抢占式提交成功率、业务顺序违规率、事务回滚率、吞吐量、平均延迟和 P95/P99 延迟。
+
+### 结果与分析
+
+无防御组的抢占式提交成功率为 {baseline_front:.2f}%，一致性违规率为 {baseline_violation:.2f}%，说明后到事务可以利用 victim 的异步窗口先完成库存扣减和订单确认，从而形成业务语义层面的顺序反转。全局序列号、版本检查/OCC、冲突键队列化和两阶段提交模拟将抢占式提交成功率分别降至 {global_front:.2f}%、{occ_front:.2f}%、{queue_front:.2f}% 和 {two_pc_front:.2f}%。其中，全局序列号通过在提交阶段按入口顺序放行冲突事务实现顺序约束，P95 延迟开销为 {global_overhead:.2f}%；OCC 通过版本/冲突检查回滚后到事务，事务回滚率为 {occ_rollback:.2f}%；冲突键队列化和两阶段提交模拟分别带来 {queue_overhead:.2f}% 和 {two_pc_overhead:.2f}% 的 P95 延迟开销。该结果说明，跨分片异步窗口风险可以通过全局排序、冲突检测、按键串行化或资源锁定显著缓解，但代价表现为尾延迟上升、回滚率增加或吞吐下降。
+"""
+
     return f"""# 第4章补充实验：分布式架构攻击与防御评估
 
 ## 实验动机
@@ -1743,7 +2025,7 @@ def render_paper_text(
 
 ## 实验设计
 
-实验设置三种流量分布：均匀流量、70% 请求集中到热点键范围、90% 请求集中到热点键范围。每组请求采用 70% `SELECT`、20% `UPDATE`、10% `INSERT` 的读写混合负载。所有请求均为正常 SQL 访问，实验不依赖注入载荷或异常语法。PostgreSQL 机制模拟记录吞吐量、平均延迟、P95/P99 延迟、失败率、限流率和每个分片的物理请求量；PostgreSQL+Citus 对照记录协调节点/工作节点拓扑下的吞吐量、平均延迟、P95/P99 延迟、失败率、工作节点 CPU/内存负载，以及热点键对应的 Citus 分片放置；TiDB 对照记录吞吐量、平均延迟、P95/P99 延迟、失败率、TiKV CPU/内存负载，以及 `SHOW TABLE ... REGIONS` 和 PD 热点 Region 接口观测到的 Region/Leader 信息。每个场景和配置均独立重复运行 5 次，表格报告均值±标准差，柱状图误差线表示 95% 置信区间。
+实验设置三种流量分布：均匀流量、70% 请求集中到热点键范围、90% 请求集中到热点键范围。每组请求采用 70% `SELECT`、20% `UPDATE`、10% `INSERT` 的读写混合负载。所有请求均为正常 SQL 访问，实验不依赖注入载荷或异常语法。PostgreSQL 机制模拟记录吞吐量、平均延迟、P95/P99 延迟、失败率、限流率和每个分片的物理请求量；PostgreSQL+Citus 对照记录协调节点/工作节点拓扑下的吞吐量、平均延迟、P95/P99 延迟、失败率、工作节点 CPU/内存负载，以及热点键对应的 Citus 分片放置；TiDB 对照记录吞吐量、平均延迟、P95/P99 延迟、失败率、TiKV CPU/内存负载，以及 `SHOW TABLE ... REGIONS` 和 PD 热点 Region 接口观测到的 Region/Leader 信息。每个场景和配置均独立重复运行 5 次，正文主表仅报告均值，完整均值±标准差及节点资源采样见补充材料；柱状图误差线表示 95% 置信区间。
 
 ## 结果与分析
 
@@ -1757,25 +2039,33 @@ def render_paper_text(
 
 {exp2_text}
 
+{exp3_text}
+
 ## 评测边界
 
-需要说明的是，分布式架构级攻击通常与具体系统实现、部署拓扑、共识协议版本及云平台权限模型高度相关。直接复现某一产品级共识漏洞或云基础设施攻击，不仅需要特定历史版本和故障注入条件，也可能引入较高的安全与伦理风险。因此，本实验采用“机制复现 + 插件化分布式 PostgreSQL 对照 + 真实系统对照”的方式进行评估：使用 PostgreSQL 三分片环境抽象复现单分片泛洪风险并量化限流、热点键隔离和队列化机制的防御代价，使用 PostgreSQL+Citus 观察 PG 扩展分片后热点键对 Citus 分片和工作节点的影响，使用 TiDB 集群观察真实分布式数据库在热点键负载和 Leader 扰动下的 Region/Leader、TiKV 负载、可用性退化与恢复过程。该设计并不声称覆盖所有分布式数据库攻击类型，也不声称复现 TiDB 产品级共识漏洞，而是用于量化第2章所讨论的典型架构级风险在受控实验条件下的影响边界和防御代价。
+需要说明的是，分布式架构级攻击通常与具体系统实现、部署拓扑、共识协议版本及云平台权限模型高度相关。直接复现某一产品级共识漏洞或云基础设施攻击，不仅需要特定历史版本和故障注入条件，也可能引入较高的安全与伦理风险。因此，本实验采用“机制复现 + 插件化分布式 PostgreSQL 对照 + 真实系统对照”的方式进行评估：使用 PostgreSQL 三分片环境抽象复现单分片泛洪风险和跨分片事务异步窗口风险，并量化限流、热点键隔离、队列化、全局排序、OCC 和两阶段提交等机制的防御代价；使用 PostgreSQL+Citus 观察 PG 扩展分片后热点键对 Citus 分片和工作节点的影响；使用 TiDB 集群观察真实分布式数据库在热点键负载和 Leader 扰动下的 Region/Leader、TiKV 负载、可用性退化与恢复过程。该设计并不声称覆盖所有分布式数据库攻击类型，也不声称复现 TiDB 产品级共识漏洞或产品级跨分片事务漏洞，而是用于量化第2章所讨论的典型架构级风险在受控实验条件下的影响边界和防御代价。
 """
 
 
-def render_reviewer_response(has_exp2: bool) -> str:
+def render_reviewer_response(has_exp2: bool, has_exp3: bool) -> str:
     exp2_sentence = (
         "同时，本文新增“TiDB 共识 Leader 压力/网络扰动下的可用性与恢复评估”，"
         "通过定位热点 Region Leader 所在 TiKV 节点并注入 CPU 压力或网络扰动，量化正常期、扰动期和恢复期的吞吐量、尾延迟、失败率、Leader 转移和恢复时间。"
         if has_exp2
         else "TiDB 共识 Leader 压力/网络扰动实验脚本和表结构已补充，待受控环境资源就绪后填入实测结果。"
     )
+    exp3_sentence = (
+        "此外，本文新增“跨分片事务异步窗口下的抢占式提交模拟”，"
+        "使用 PostgreSQL 三分片环境抽象用户校验、库存扣减和订单确认流程，并比较全局序列号、OCC、冲突键队列化和两阶段提交模拟的防御效果与性能代价。"
+        if has_exp3
+        else "跨分片事务异步窗口模拟实验脚本和表结构已补充，待受控环境资源就绪后填入实测结果。"
+    )
     return (
         "感谢审稿专家指出理论分类与实证评估覆盖度之间的匹配问题。根据该意见，本文在第4章补充了分布式架构级攻击防御评估。"
         "首先，本文新增“单分片泛洪攻击与限流/负载均衡防御评估”，采用“PostgreSQL 三分片机制模拟 + PostgreSQL+Citus 分布式扩展对照 + TiDB 真实分布式数据库对照”的方式，"
         "构造均匀流量、70% 热点流量和 90% 热点流量，并比较无防御、分片级限流、热点键限流和请求队列隔离/读分流策略的防御效果与性能代价。"
-        f"{exp2_sentence}"
-        "每个场景和配置均独立重复运行 5 次，表格报告均值±标准差，图中使用 95% 置信区间标注波动。\n\n"
+        f"{exp2_sentence}{exp3_sentence}"
+        "每个场景和配置均独立重复运行 5 次，正文主表仅报告均值，完整均值±标准差及节点资源采样见补充材料，图中使用 95% 置信区间标注波动。\n\n"
         "考虑到真实共识实现漏洞、DBaaS 元数据攻击和产品级跨分片事务问题高度依赖特定系统版本、云平台权限模型和故障注入条件，"
         "本文采用可控仿真环境、PostgreSQL 分布式扩展与真实分布式数据库对照相结合的方式，明确限定评测边界，"
         "避免将实验结论泛化为对所有分布式数据库产品的安全性判断，也避免将 TiDB 可用性扰动实验表述为产品漏洞复现。"

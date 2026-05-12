@@ -1,6 +1,6 @@
 # 分布式数据库安全补充实验
 
-本目录用于补充论文第4章的分布式架构级攻击与防御评估。当前已完成实验一与实验二：实验一包含 PostgreSQL 三分片机制模拟、PostgreSQL+Citus 分布式扩展对照，以及 TiDB 真实分布式数据库热点键对照；实验二评估 TiDB 热点 Region Leader 所在 TiKV 节点遭遇 CPU 压力或网络扰动时的可用性退化与恢复过程。
+本目录用于补充论文第4章的分布式架构级攻击与防御评估。当前已完成实验一、实验二与实验三：实验一包含 PostgreSQL 三分片机制模拟、PostgreSQL+Citus 分布式扩展对照，以及 TiDB 真实分布式数据库热点键对照；实验二评估 TiDB 热点 Region Leader 所在 TiKV 节点遭遇 CPU 压力或网络扰动时的可用性退化与恢复过程；实验三使用 PostgreSQL 三分片环境模拟跨分片事务异步窗口下的抢占式提交风险和防御代价。
 
 ## 实验一：单分片泛洪攻击与防御评估
 
@@ -16,7 +16,7 @@ PostgreSQL 原生不提供 TiDB 这类内置分布式分片、Region 或 Leader 
 - 资源限制：每个 PostgreSQL 分片限制为 2 vCPU、2 GiB 内存。该配置用于当前服务器可复现实验，报告中不将结果泛化为生产容量。
 - PostgreSQL 18 镜像的数据卷挂载在 `/var/lib/postgresql`，以兼容官方 18+ 镜像的数据目录布局。
 - PostgreSQL+Citus 对照默认使用 `citusdata/citus:12.1` 镜像；当前服务器已缓存 `citusdata/citus:12.1.6`，可通过 `CITUS_IMAGE=citusdata/citus:12.1.6` 复用本地镜像。
-- 实验一当前按每组 5 次独立重复运行；原始 CSV 保留 `run_id`，论文表格报告均值±标准差，汇总 CSV 额外给出标准差和 95% 置信区间半宽，柱状图使用 95% 置信区间误差线。CPU、P95/P99、Region、Leader 等通用缩写或产品术语保留原文。
+- 实验一当前按每组 5 次独立重复运行；原始 CSV 保留 `run_id`，正文表 A 仅报告均值，完整均值±标准差和节点资源采样保留在补充表，汇总 CSV 额外给出标准差和 95% 置信区间半宽，柱状图使用 95% 置信区间误差线。CPU、P95/P99、Region、Leader 等通用缩写或产品术语保留原文。
 
 确认镜像版本：
 
@@ -142,6 +142,40 @@ python3 scripts/analyze_results.py
 
 每个场景默认包含正常期 4 秒、扰动期 6 秒和恢复期 6 秒；每组 5 次独立重复。P95/P99 延迟按成功请求统计，失败请求通过失败率单独报告。恢复时间定义为恢复期内业务成功吞吐量达到正常期 90%，且成功请求 P99 延迟不高于正常期 110% 的最早时间。
 
+## 实验三：跨分片事务异步窗口下的抢占式提交模拟
+
+### 定位说明
+
+本实验不声称复现 TiDB 或任何真实产品的跨分片事务漏洞。脚本使用 PostgreSQL 三分片环境做机制模拟：shard-0 存放用户资格，shard-1 存放商品库存，shard-2 存放订单确认。每个事务对包含先到达的 `T_victim` 和后到达的 `T_attacker`，其中 `T_victim` 在用户校验后存在人为异步窗口，`T_attacker` 在窗口内尝试先完成库存扣减和订单确认。
+
+### 防御组
+
+- `baseline`：无防御，各分片按本地到达顺序处理。
+- `global_sequence`：入口路由层为事务分配全局递增序号，提交阶段按序放行冲突事务。
+- `occ`：版本/冲突检查，检测到后到事务抢占冲突时回滚后到事务。
+- `conflict_key_queue`：同一商品键的跨分片事务串行执行。
+- `two_phase_commit`：prepare 阶段锁定库存行，commit 阶段统一确认；本实现用于机制模拟。
+
+### 运行命令
+
+```bash
+cd /root/db-security-experiment/distributed-db-security-experiments
+
+# 使用已启动的 PostgreSQL 三分片环境运行 5 次重复实验
+python3 scripts/exp3_cross_shard_frontrun_sim.py --runs 5
+
+# 若 PostgreSQL 三分片环境尚未启动，可由脚本启动；--clean 会删除三个分片数据卷
+python3 scripts/exp3_cross_shard_frontrun_sim.py --clean --start-services --runs 5
+
+# 快速验证
+python3 scripts/exp3_cross_shard_frontrun_sim.py --runs 1 --pairs 20 --concurrency 16
+
+# 重新生成表 C、图和论文文字
+python3 scripts/analyze_results.py
+```
+
+默认每组运行 120 对 victim/attacker 事务，每组 5 次独立重复。库存初始值为 2，因此本实验主要观察后到事务先完成库存扣减和订单确认造成的业务顺序反转，而不是库存超卖。
+
 ### 输出
 
 - `results/raw/exp1_single_shard_flood_requests.csv`：逐请求原始记录，包含 `run_id`。
@@ -156,7 +190,10 @@ python3 scripts/analyze_results.py
 - `results/raw/exp2_tidb_tikv_resource_samples.csv`：实验二 TiKV CPU、内存采样，包含阶段和目标 Leader 节点标识。
 - `results/raw/exp2_tidb_leader_observations.csv`：实验二热点 Region Leader 采样，包含 Leader 是否发生转移。
 - `results/raw/exp2_tidb_perturbation_events.csv`：实验二扰动开始/停止事件与实际注入方式。
-- `results/tables/table_A_single_shard_flood.md`：论文可用表 A，主要指标为均值±标准差。
+- `results/raw/exp3_cross_shard_transactions.csv`：实验三逐事务原始记录，包含 `run_id`、事务角色、提交时间、延迟、回滚和成功状态。
+- `results/raw/exp3_cross_shard_pairs.csv`：实验三 victim/attacker 事务对结果，包含抢占式提交、顺序违规和一致性违规标识。
+- `results/tables/table_A_single_shard_flood.md`：论文可用表 A，合并 PostgreSQL 三分片、PostgreSQL+Citus 与 TiDB，正文仅保留均值简表。
+- `results/tables/table_A_single_shard_flood_full.md`：表 A 补充材料，保留完整均值±标准差、P95、业务成功吞吐量和节点资源采样。
 - `results/tables/exp1_single_shard_flood_summary.csv`：PostgreSQL 三分片结构化汇总结果，包含均值、标准差和 95% 置信区间半宽。
 - `results/tables/exp1_citus_hotspot_summary.csv`：PostgreSQL+Citus 对照汇总结果，包含均值、标准差和 95% 置信区间半宽。
 - `results/tables/exp1_citus_resource_summary.csv`：Citus 节点资源采样汇总，包含均值、标准差和 95% 置信区间半宽。
@@ -169,11 +206,14 @@ python3 scripts/analyze_results.py
 - `results/tables/exp2_tidb_leader_phase_summary.csv`：实验二正常期、扰动期和恢复期分阶段汇总。
 - `results/tables/exp2_tidb_tikv_resource_summary.csv`：实验二 TiKV 资源采样汇总。
 - `results/tables/exp2_tidb_leader_transfer_summary.csv`：实验二 Leader 转移观测汇总。
+- `results/tables/table_C_cross_shard_frontrun.md`：论文可用表 C，汇总跨分片事务抢占式提交模拟结果。
+- `results/tables/exp3_cross_shard_frontrun_summary.csv`：实验三结构化汇总结果，包含均值、标准差和 95% 置信区间半宽。
 - `results/figures/exp1_shard_load_changes.png`：90% 热点流量下各分片物理负载对比图，误差线表示 95% 置信区间。
 - `results/figures/exp1_citus_worker_load.png`：PostgreSQL+Citus 热点流量下节点峰值 CPU 对比图，误差线表示 95% 置信区间。
 - `results/figures/exp1_tidb_tikv_load.png`：TiDB 热点流量下 TiKV 峰值 CPU 对比图，误差线表示 95% 置信区间。
 - `results/figures/exp2_tidb_p99_recovery_curve.png`：TiDB Leader 扰动前后成功请求 P99 延迟与恢复曲线，阴影表示 95% 置信区间。
-- `paper/section_4_append_text.md`：可直接并入论文第4章的实验一与实验二文字。
+- `results/figures/exp3_frontrun_defense_overhead.png`：跨分片抢占式提交成功率与防御开销对比图，误差线表示 95% 置信区间。
+- `paper/section_4_append_text.md`：可直接并入论文第4章的实验一、实验二与实验三文字。
 - `paper/reviewer_response.md`：回复审稿意见的补充实验说明。
 
 ### 停止环境
