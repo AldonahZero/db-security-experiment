@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import math
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from matplotlib import font_manager
 import matplotlib.pyplot as plt
@@ -123,6 +123,7 @@ def main() -> int:
     citus_summary = pd.DataFrame()
     citus_resource_summary = pd.DataFrame()
     citus_placement_summary = pd.DataFrame()
+    citus_resource_raw = pd.DataFrame()
     citus_raw_path = root / args.citus_requests_csv
     if citus_raw_path.exists():
         citus_requests = pd.read_csv(citus_raw_path)
@@ -130,9 +131,10 @@ def main() -> int:
         write_chinese_csv(citus_summary, table_dir / "exp1_citus_hotspot_summary.csv", "citus_hotspot")
         citus_resource_path = root / args.citus_resource_csv
         if citus_resource_path.exists():
-            citus_resource_summary = summarize_citus_resources(pd.read_csv(citus_resource_path))
+            citus_resource_raw = pd.read_csv(citus_resource_path)
+            citus_resource_summary = summarize_citus_resources(citus_resource_raw)
             write_chinese_csv(citus_resource_summary, table_dir / "exp1_citus_resource_summary.csv", "citus_resource")
-            render_citus_worker_figure(pd.read_csv(citus_resource_path), figure_dir / "exp1_citus_worker_load.png")
+            render_citus_worker_figure(citus_resource_raw, figure_dir / "exp1_citus_worker_load.png")
         citus_placement_path = root / args.citus_placement_csv
         if citus_placement_path.exists():
             citus_placement_summary = summarize_citus_placements(pd.read_csv(citus_placement_path))
@@ -141,6 +143,7 @@ def main() -> int:
     tidb_summary = pd.DataFrame()
     tidb_resource_summary = pd.DataFrame()
     tidb_region_summary = pd.DataFrame()
+    tidb_resource_raw = pd.DataFrame()
     tidb_raw_path = root / args.tidb_requests_csv
     if tidb_raw_path.exists():
         tidb_requests = pd.read_csv(tidb_raw_path)
@@ -148,9 +151,10 @@ def main() -> int:
         write_chinese_csv(tidb_summary, table_dir / "exp1_tidb_hotspot_summary.csv", "tidb_hotspot")
         tidb_resource_path = root / args.tidb_resource_csv
         if tidb_resource_path.exists():
-            tidb_resource_summary = summarize_tidb_resources(pd.read_csv(tidb_resource_path))
+            tidb_resource_raw = pd.read_csv(tidb_resource_path)
+            tidb_resource_summary = summarize_tidb_resources(tidb_resource_raw)
             write_chinese_csv(tidb_resource_summary, table_dir / "exp1_tidb_tikv_resource_summary.csv", "tidb_resource")
-            render_tidb_tikv_figure(pd.read_csv(tidb_resource_path), figure_dir / "exp1_tidb_tikv_load.png")
+            render_tidb_tikv_figure(tidb_resource_raw, figure_dir / "exp1_tidb_tikv_load.png")
         tidb_region_path = root / args.tidb_region_csv
         if tidb_region_path.exists():
             tidb_region_summary = summarize_tidb_regions(pd.read_csv(tidb_region_path))
@@ -177,13 +181,16 @@ def main() -> int:
         table_b_path = table_dir / "table_B_tidb_leader_stress.md"
         table_b_path.write_text(table_b, encoding="utf-8")
         render_exp2_recovery_figure(exp2_requests, figure_dir / "exp2_tidb_p99_recovery_curve.png")
+        exp2_resources = pd.DataFrame()
         exp2_resource_path = root / args.exp2_resource_csv
         if exp2_resource_path.exists():
-            exp2_resource_summary = summarize_exp2_resources(pd.read_csv(exp2_resource_path))
+            exp2_resources = pd.read_csv(exp2_resource_path)
+            exp2_resource_summary = summarize_exp2_resources(exp2_resources)
             write_chinese_csv(exp2_resource_summary, table_dir / "exp2_tidb_tikv_resource_summary.csv", "exp2_resource")
         if not exp2_leaders.empty:
             exp2_leader_summary = summarize_exp2_leaders(exp2_leaders)
             write_chinese_csv(exp2_leader_summary, table_dir / "exp2_tidb_leader_transfer_summary.csv", "exp2_leader")
+        render_exp2_multiplot(exp2_requests, exp2_resources, figure_dir / "exp2_tidb_leader_multiplot.png")
 
     exp3_summary = pd.DataFrame()
     exp3_txn_path = root / args.exp3_transactions_csv
@@ -196,6 +203,7 @@ def main() -> int:
         table_c_path = table_dir / "table_C_cross_shard_frontrun.md"
         table_c_path.write_text(render_table_c(exp3_summary), encoding="utf-8")
         render_exp3_figure(exp3_summary, figure_dir / "exp3_frontrun_defense_overhead.png")
+        render_exp3_figure(exp3_summary, figure_dir / "exp3_frontrun_multiplot.png")
 
     table_md = render_table_a(
         summary,
@@ -219,6 +227,16 @@ def main() -> int:
 
     figure_path = figure_dir / "exp1_shard_load_changes.png"
     render_shard_load_figure(requests, figure_path)
+    exp1_multiplot_path = figure_dir / "exp1_distribution_multiplot.png"
+    render_exp1_multiplot(
+        requests,
+        summary,
+        citus_summary,
+        citus_resource_raw,
+        tidb_summary,
+        tidb_resource_raw,
+        exp1_multiplot_path,
+    )
 
     paper_path = paper_dir / "section_4_append_text.md"
     paper_path.write_text(
@@ -247,13 +265,16 @@ def main() -> int:
     print(f"[analyze] wrote {table_path}")
     print(f"[analyze] wrote {supplement_path}")
     print(f"[analyze] wrote {figure_path}")
+    print(f"[analyze] wrote {exp1_multiplot_path}")
     print(f"[analyze] wrote {paper_path}")
     if not exp2_summary.empty:
         print(f"[analyze] wrote {table_dir / 'table_B_tidb_leader_stress.md'}")
         print(f"[analyze] wrote {figure_dir / 'exp2_tidb_p99_recovery_curve.png'}")
+        print(f"[analyze] wrote {figure_dir / 'exp2_tidb_leader_multiplot.png'}")
     if not exp3_summary.empty:
         print(f"[analyze] wrote {table_dir / 'table_C_cross_shard_frontrun.md'}")
         print(f"[analyze] wrote {figure_dir / 'exp3_frontrun_defense_overhead.png'}")
+        print(f"[analyze] wrote {figure_dir / 'exp3_frontrun_multiplot.png'}")
     print(f"[analyze] wrote {reviewer_path}")
     return 0
 
@@ -1602,6 +1623,155 @@ def clipped_yerr(means: pd.Series, cis: pd.Series) -> List[List[float]]:
     return [lower, upper]
 
 
+def render_exp1_multiplot(
+    requests: pd.DataFrame,
+    summary: pd.DataFrame,
+    citus_summary: pd.DataFrame,
+    citus_resources: pd.DataFrame,
+    tidb_summary: pd.DataFrame,
+    tidb_resources: pd.DataFrame,
+    output: Path,
+) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(13.2, 8.6))
+    fig.suptitle("实验一：单分片泛洪与分布式热点负载组图（n=5，误差线/阴影为95%置信区间）", fontsize=13)
+    draw_exp1_shard_load_axis(axes[0, 0], requests)
+    draw_exp1_resource_axis(
+        axes[0, 1],
+        citus_resources,
+        ["citus_uniform", "citus_hot70", "citus_hot90"],
+        "B. PostgreSQL+Citus 节点峰值CPU",
+        "流量场景",
+    )
+    draw_exp1_resource_axis(
+        axes[1, 0],
+        tidb_resources,
+        ["tidb_uniform", "tidb_hot70", "tidb_hot90"],
+        "C. TiDB TiKV 节点峰值CPU",
+        "流量场景",
+    )
+    draw_exp1_p99_line_axis(axes[1, 1], summary, citus_summary, tidb_summary)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(output, dpi=180)
+    plt.close(fig)
+
+
+def draw_exp1_shard_load_axis(ax, df: pd.DataFrame) -> None:
+    if df.empty:
+        ax.text(0.5, 0.5, "无数据", transform=ax.transAxes, ha="center", va="center")
+        return
+    df = ensure_run_id(df)
+    hot = df[(df["scenario"] == "hot90") & (df["success"] == True)].copy()  # noqa: E712
+    hot = hot[hot["physical_shard"].astype(str).str.startswith("shard-")]
+    run_ids = sorted(df["run_id"].dropna().unique())
+    defenses = ["baseline", "shard_limit", "hot_key_limit", "queue_isolation"]
+    shards = ["shard-0", "shard-1", "shard-2"]
+    counts = hot.groupby(["run_id", "defense", "physical_shard"]).size().rename("requests")
+    full_index = pd.MultiIndex.from_product([run_ids, defenses, shards], names=["run_id", "defense", "physical_shard"])
+    per_run = counts.reindex(full_index, fill_value=0).reset_index()
+    stats = per_run.groupby(["defense", "physical_shard"])["requests"].agg(["mean", "std", "count"]).reset_index()
+    stats["ci95"] = stats["std"].fillna(0) * 1.96 / stats["count"].pow(0.5)
+    means = stats.pivot(index="defense", columns="physical_shard", values="mean").reindex(index=defenses, columns=shards)
+    cis = stats.pivot(index="defense", columns="physical_shard", values="ci95").reindex(index=defenses, columns=shards).fillna(0)
+    x = range(len(means.index))
+    width = 0.24
+    colors = ["#C94C4C", "#4C78A8", "#59A14F"]
+    for idx, shard in enumerate(means.columns):
+        ax.bar(
+            [pos + (idx - 1) * width for pos in x],
+            means[shard].values,
+            width=width,
+            yerr=clipped_yerr(means[shard], cis[shard]),
+            capsize=3,
+            label=SHARD_LABELS.get(shard, shard),
+            color=colors[idx],
+        )
+    ax.set_title("A. 90%热点流量下 PostgreSQL 物理分片负载")
+    ax.set_ylabel("成功数据库请求数")
+    ax.set_xticks(list(x), [DEFENSE_LABELS.get(item, item) for item in means.index], rotation=14, ha="right")
+    ax.legend(title="物理分片", fontsize=8, title_fontsize=9)
+    ax.grid(axis="y", alpha=0.25)
+
+
+def draw_exp1_resource_axis(ax, df: pd.DataFrame, scenarios: List[str], title: str, xlabel: str) -> None:
+    if df.empty:
+        ax.text(0.5, 0.5, "无资源采样", transform=ax.transAxes, ha="center", va="center")
+        ax.set_title(title)
+        return
+    df = ensure_run_id(df)
+    per_run = df.groupby(["run_id", "scenario", "container"])["cpu_percent"].max().reset_index(name="peak_cpu")
+    stats = per_run.groupby(["scenario", "container"])["peak_cpu"].agg(["mean", "std", "count"]).reset_index()
+    stats["ci95"] = stats["std"].fillna(0) * 1.96 / stats["count"].pow(0.5)
+    pivot = stats.pivot(index="scenario", columns="container", values="mean").reindex(index=scenarios)
+    ci = stats.pivot(index="scenario", columns="container", values="ci95").reindex(index=scenarios).fillna(0)
+    pivot = pivot.dropna(axis=1, how="all")
+    x = range(len(pivot.index))
+    node_count = max(len(pivot.columns), 1)
+    width = min(0.72 / node_count, 0.22)
+    offsets = [(idx - (node_count - 1) / 2) * width for idx in range(node_count)]
+    colors = ["#4C78A8", "#59A14F", "#F28E2B", "#C94C4C"]
+    for idx, container in enumerate(pivot.columns):
+        ax.bar(
+            [pos + offsets[idx] for pos in x],
+            pivot[container].values,
+            width=width,
+            yerr=clipped_yerr(pivot[container], ci[container]),
+            capsize=3,
+            label=node_label(container),
+            color=colors[idx % len(colors)],
+        )
+    ax.set_title(title)
+    ax.set_ylabel("峰值CPU(%)")
+    ax.set_xlabel(xlabel)
+    ax.set_xticks(list(x), [scenario_label(item) for item in pivot.index], rotation=0)
+    ax.legend(title="节点", fontsize=7, title_fontsize=8, loc="upper left")
+    ax.grid(axis="y", alpha=0.25)
+
+
+def draw_exp1_p99_line_axis(ax, summary: pd.DataFrame, citus_summary: pd.DataFrame, tidb_summary: pd.DataFrame) -> None:
+    hotspot = [0, 70, 90]
+    series = [
+        ("PostgreSQL无防御", summary, ["uniform", "hot70", "hot90"], "baseline", "#C94C4C"),
+        ("PostgreSQL队列隔离", summary, ["uniform", "hot70", "hot90"], "queue_isolation", "#4C78A8"),
+        ("PostgreSQL+Citus", citus_summary, ["citus_uniform", "citus_hot70", "citus_hot90"], None, "#F28E2B"),
+        ("TiDB", tidb_summary, ["tidb_uniform", "tidb_hot70", "tidb_hot90"], None, "#59A14F"),
+    ]
+    for label, frame, scenarios, defense, color in series:
+        if frame.empty:
+            continue
+        values = []
+        cis = []
+        for scenario in scenarios:
+            row = exp1_summary_row(frame, scenario, defense)
+            if row is None:
+                values.append(math.nan)
+                cis.append(0.0)
+            else:
+                values.append(float(row.get("p99_latency_ms", math.nan)))
+                ci = row.get("p99_latency_ms_ci95", 0.0)
+                cis.append(0.0 if pd.isna(ci) else float(ci))
+        if all(pd.isna(value) for value in values):
+            continue
+        y = pd.Series(values, dtype="float")
+        ci_series = pd.Series(cis, dtype="float")
+        ax.plot(hotspot, y, marker="o", linewidth=2, label=label, color=color)
+        ax.fill_between(hotspot, (y - ci_series).clip(lower=0), y + ci_series, color=color, alpha=0.12)
+    ax.set_title("D. 热点比例升高时的 P99 延迟变化")
+    ax.set_xlabel("热点请求比例(%)")
+    ax.set_ylabel("P99延迟(ms)")
+    ax.set_xticks(hotspot, ["0", "70", "90"])
+    ax.grid(alpha=0.25)
+    ax.legend(fontsize=8, loc="upper left")
+
+
+def exp1_summary_row(frame: pd.DataFrame, scenario: str, defense: object) -> Optional[pd.Series]:
+    subset = frame[frame["scenario"] == scenario]
+    if defense is not None and "defense" in subset.columns:
+        subset = subset[subset["defense"] == defense]
+    if subset.empty:
+        return None
+    return subset.iloc[0]
+
+
 def render_shard_load_figure(df: pd.DataFrame, output: Path) -> None:
     df = ensure_run_id(df)
     hot = df[(df["scenario"] == "hot90") & (df["success"] == True)].copy()  # noqa: E712
@@ -1729,13 +1899,192 @@ def render_exp2_recovery_figure(df: pd.DataFrame, output: Path) -> None:
         plt.fill_between(x, (mean - ci).clip(lower=0), mean + ci, color=colors.get(scenario), alpha=0.12)
     plt.axvline(baseline_s, color="#555555", linewidth=1, linestyle="--")
     plt.axvline(baseline_s + perturb_s, color="#555555", linewidth=1, linestyle="--")
-    plt.xlabel("实验相对时间(s)")
+    plt.xlabel("短时故障注入相对时间(s)")
     plt.ylabel("成功请求P99延迟(ms)")
-    plt.title("TiDB Leader 扰动前后成功请求 P99 延迟与恢复曲线（阴影为95%置信区间）")
+    plt.title("TiDB Leader 短时扰动前后成功请求 P99 延迟曲线（阴影为95%置信区间）")
     plt.legend(title="场景", loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0)
     plt.tight_layout()
     plt.savefig(output, dpi=180)
     plt.close()
+
+
+def render_exp2_multiplot(requests: pd.DataFrame, resources: pd.DataFrame, output: Path) -> None:
+    if requests.empty:
+        return
+    requests = ensure_run_id(requests).copy()
+    scenarios = ["leader_cpu_stress", "leader_network_perturbation", "leader_cpu_stress_limited"]
+    phases = ["normal", "perturbation", "recovery"]
+    phase_labels = [EXP2_PHASE_LABELS[phase] for phase in phases]
+    scenario_labels = [EXP2_SCENARIO_LABELS[scenario].replace("Leader", "") for scenario in scenarios]
+    colors = {"normal": "#4C78A8", "perturbation": "#C94C4C", "recovery": "#59A14F"}
+
+    rows: List[Dict[str, object]] = []
+    for (run_id, scenario, phase), group in requests.groupby(["run_id", "scenario", "phase"], sort=False):
+        if scenario == "baseline":
+            continue
+        duration = phase_duration(group)
+        success = group[group["success"] == True]  # noqa: E712
+        failure_rate = pct(len(group) - len(success), len(group))
+        p99 = success["latency_ms"].astype(float).quantile(0.99) if not success.empty else math.nan
+        rows.append(
+            {
+                "run_id": run_id,
+                "scenario": scenario,
+                "phase": phase,
+                "success_qps": len(success) / duration,
+                "failure_rate_pct": failure_rate,
+                "success_p99_latency_ms": p99,
+            }
+        )
+    metric_df = pd.DataFrame(rows)
+    metric_stats = exp2_plot_stats(metric_df, ["scenario", "phase"])
+
+    cpu_stats = pd.DataFrame()
+    if not resources.empty:
+        res = ensure_run_id(resources).copy()
+        if "is_target_leader" in res.columns:
+            res = res[res["is_target_leader"] == True]  # noqa: E712
+        res = res[res["scenario"].isin(scenarios)]
+        cpu_rows = (
+            res.groupby(["run_id", "scenario", "phase"])["cpu_percent"]
+            .max()
+            .reset_index(name="target_peak_cpu_pct")
+        )
+        cpu_stats = exp2_plot_stats(cpu_rows, ["scenario", "phase"])
+
+    fig, axes = plt.subplots(2, 2, figsize=(12.2, 8.0))
+    fig.suptitle("实验二：TiDB Leader 扰动可用性与恢复组图（n=5，误差线为95%置信区间）", fontsize=13)
+    draw_exp2_phase_bars(
+        axes[0, 0],
+        metric_stats,
+        scenarios,
+        phases,
+        "success_qps",
+        "成功吞吐量(请求/秒)",
+        "A. 成功吞吐量变化",
+        scenario_labels,
+        colors,
+    )
+    draw_exp2_phase_bars(
+        axes[0, 1],
+        metric_stats,
+        scenarios,
+        phases,
+        "failure_rate_pct",
+        "失败率(%)",
+        "B. 失败率变化",
+        scenario_labels,
+        colors,
+    )
+    draw_exp2_phase_bars(
+        axes[1, 0],
+        metric_stats,
+        scenarios,
+        phases,
+        "success_p99_latency_ms",
+        "成功请求P99延迟(ms)",
+        "C. 成功请求尾延迟",
+        scenario_labels,
+        colors,
+        annotate_missing=True,
+    )
+    draw_exp2_phase_bars(
+        axes[1, 1],
+        cpu_stats,
+        scenarios,
+        phases,
+        "target_peak_cpu_pct",
+        "目标TiKV峰值CPU(%)",
+        "D. 目标Leader节点资源压力",
+        scenario_labels,
+        colors,
+    )
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, title="阶段", loc="upper center", bbox_to_anchor=(0.5, 0.965), ncol=3)
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    fig.savefig(output, dpi=180)
+    plt.close(fig)
+
+
+def exp2_plot_stats(df: pd.DataFrame, group_cols: List[str]) -> pd.DataFrame:
+    if df.empty:
+        return df
+    numeric_cols = [
+        column
+        for column in df.columns
+        if column not in set(group_cols + ["run_id"]) and pd.api.types.is_numeric_dtype(df[column])
+    ]
+    rows: List[Dict[str, object]] = []
+    for keys, group in df.groupby(group_cols, sort=False):
+        if not isinstance(keys, tuple):
+            keys = (keys,)
+        row: Dict[str, object] = dict(zip(group_cols, keys))
+        for column in numeric_cols:
+            values = group[column].dropna().astype(float)
+            row[column] = values.mean() if not values.empty else math.nan
+            std = values.std(ddof=1) if len(values) > 1 else 0.0
+            row[f"{column}_ci95"] = 1.96 * std / math.sqrt(len(values)) if len(values) > 1 else 0.0
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def draw_exp2_phase_bars(
+    ax,
+    stats: pd.DataFrame,
+    scenarios: List[str],
+    phases: List[str],
+    metric: str,
+    ylabel: str,
+    title: str,
+    scenario_labels: List[str],
+    colors: Dict[str, str],
+    annotate_missing: bool = False,
+) -> None:
+    ax.set_title(title)
+    ax.set_ylabel(ylabel)
+    if stats.empty or metric not in stats.columns:
+        ax.text(0.5, 0.5, "无数据", transform=ax.transAxes, ha="center", va="center")
+        ax.set_xticks(range(len(scenarios)), scenario_labels, rotation=12, ha="right")
+        return
+    data = stats.set_index(["scenario", "phase"])
+    x = list(range(len(scenarios)))
+    width = 0.24
+    ymax = 0.0
+    for idx, phase in enumerate(phases):
+        means = []
+        errs = []
+        for scenario in scenarios:
+            if (scenario, phase) in data.index:
+                mean = data.loc[(scenario, phase), metric]
+                ci = data.loc[(scenario, phase), f"{metric}_ci95"] if f"{metric}_ci95" in data.columns else 0.0
+            else:
+                mean = math.nan
+                ci = 0.0
+            means.append(mean)
+            errs.append(0.0 if pd.isna(ci) else float(ci))
+            if not pd.isna(mean):
+                ymax = max(ymax, float(mean + (0.0 if pd.isna(ci) else ci)))
+        positions = [pos + (idx - 1) * width for pos in x]
+        bars = ax.bar(
+            positions,
+            [0 if pd.isna(value) else value for value in means],
+            width=width,
+            yerr=errs,
+            capsize=3,
+            color=colors[phase],
+            label=EXP2_PHASE_LABELS[phase],
+            alpha=0.92,
+        )
+        for bar, value in zip(bars, means):
+            if pd.isna(value):
+                if annotate_missing:
+                    ax.text(bar.get_x() + bar.get_width() / 2, 0, "无成功", ha="center", va="bottom", fontsize=8, rotation=90)
+                continue
+            if value == 0:
+                ax.text(bar.get_x() + bar.get_width() / 2, 0, "0", ha="center", va="bottom", fontsize=8)
+    ax.set_xticks(x, scenario_labels, rotation=12, ha="right")
+    ax.grid(axis="y", alpha=0.25)
+    ax.set_ylim(bottom=0, top=max(ymax * 1.18, 1.0))
 
 
 def render_exp3_figure(summary: pd.DataFrame, output: Path) -> None:
@@ -1745,40 +2094,113 @@ def render_exp3_figure(summary: pd.DataFrame, output: Path) -> None:
     x = range(len(data.index))
     labels = [EXP3_DEFENSE_LABELS.get(item, item) for item in data.index]
 
-    fig, axes = plt.subplots(1, 2, figsize=(11.0, 4.8))
+    fig, axes = plt.subplots(2, 2, figsize=(12.4, 8.4))
+    fig.suptitle("实验三：跨分片抢占式提交与防御代价组图（n=5，误差线为95%置信区间）", fontsize=13)
     front = data["front_run_success_pct"].astype(float)
     front_ci = data["front_run_success_pct_ci95"].fillna(0).astype(float)
-    axes[0].bar(
+    bars = axes[0, 0].bar(
         list(x),
         front.values,
         yerr=clipped_yerr(front, front_ci),
         capsize=4,
         color="#C94C4C",
     )
-    axes[0].set_title("抢占式提交成功率")
-    axes[0].set_ylabel("成功率(%)")
-    axes[0].set_xticks(list(x), labels, rotation=20, ha="right")
-    axes[0].set_ylim(bottom=0)
+    axes[0, 0].set_title("A. 抢占式提交成功率")
+    axes[0, 0].set_ylabel("成功率(%)")
+    axes[0, 0].set_xticks(list(x), labels, rotation=18, ha="right")
+    axes[0, 0].set_ylim(bottom=0, top=max(front.max() * 1.18, 5))
+    annotate_bars(axes[0, 0], bars, front.values, suffix="%")
+
+    width = 0.36
+    consistency = data["consistency_violation_pct"].astype(float)
+    rollback = data["rollback_rate_pct"].astype(float)
+    cons_ci = data["consistency_violation_pct_ci95"].fillna(0).astype(float)
+    rollback_ci = data["rollback_rate_pct_ci95"].fillna(0).astype(float)
+    bars1 = axes[0, 1].bar(
+        [pos - width / 2 for pos in x],
+        consistency.values,
+        width=width,
+        yerr=clipped_yerr(consistency, cons_ci),
+        capsize=3,
+        color="#F28E2B",
+        label="一致性违规率",
+    )
+    bars2 = axes[0, 1].bar(
+        [pos + width / 2 for pos in x],
+        rollback.values,
+        width=width,
+        yerr=clipped_yerr(rollback, rollback_ci),
+        capsize=3,
+        color="#4C78A8",
+        label="事务回滚率",
+    )
+    axes[0, 1].set_title("B. 违规与回滚")
+    axes[0, 1].set_ylabel("比例(%)")
+    axes[0, 1].set_xticks(list(x), labels, rotation=18, ha="right")
+    axes[0, 1].legend()
+    axes[0, 1].set_ylim(bottom=0, top=max(float(max(consistency.max(), rollback.max())) * 1.22, 5))
+    annotate_bars(axes[0, 1], bars1, consistency.values, suffix="%")
+    annotate_bars(axes[0, 1], bars2, rollback.values, suffix="%")
+
+    throughput = data["throughput_txn_s"].astype(float)
+    throughput_ci = data["throughput_txn_s_ci95"].fillna(0).astype(float)
+    bars = axes[1, 0].bar(
+        list(x),
+        throughput.values,
+        yerr=clipped_yerr(throughput, throughput_ci),
+        capsize=4,
+        color="#59A14F",
+    )
+    axes[1, 0].set_title("C. 事务吞吐量")
+    axes[1, 0].set_ylabel("吞吐量(事务/秒)")
+    axes[1, 0].set_xticks(list(x), labels, rotation=18, ha="right")
+    axes[1, 0].set_ylim(bottom=0, top=max(throughput.max() * 1.18, 1))
+    annotate_bars(axes[1, 0], bars, throughput.values, fmt_str="{:.0f}")
 
     overhead = data["p95_latency_overhead_pct"].astype(float)
     overhead_ci = data["p95_latency_overhead_pct_ci95"].fillna(0).astype(float)
     colors = ["#9E9E9E" if value < 0 else "#4C78A8" for value in overhead.values]
-    axes[1].bar(
+    bars = axes[1, 1].bar(
         list(x),
         overhead.values,
         yerr=overhead_ci.values,
         capsize=4,
         color=colors,
     )
-    axes[1].axhline(0, color="#333333", linewidth=1)
-    axes[1].set_title("P95延迟开销")
-    axes[1].set_ylabel("相对无防御变化(%)")
-    axes[1].set_xticks(list(x), labels, rotation=20, ha="right")
-
-    fig.suptitle("跨分片抢占式提交成功率与防御开销（误差线为95%置信区间）")
-    fig.tight_layout()
+    axes[1, 1].axhline(0, color="#333333", linewidth=1)
+    axes[1, 1].set_title("D. P95延迟开销")
+    axes[1, 1].set_ylabel("相对无防御变化(%)")
+    axes[1, 1].set_xticks(list(x), labels, rotation=18, ha="right")
+    annotate_bars(axes[1, 1], bars, overhead.values, suffix="%")
+    for ax in axes.flat:
+        ax.grid(axis="y", alpha=0.25)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(output, dpi=180)
     plt.close(fig)
+
+
+def annotate_bars(ax, bars, values, suffix: str = "", fmt_str: str = "{:.1f}") -> None:
+    ymin, ymax = ax.get_ylim()
+    span = ymax - ymin
+    for bar, value in zip(bars, values):
+        try:
+            value_f = float(value)
+        except Exception:
+            continue
+        if pd.isna(value_f):
+            continue
+        label = f"{fmt_str.format(value_f)}{suffix}"
+        offset = span * 0.015
+        va = "bottom"
+        y = value_f + offset
+        if value_f < 0:
+            va = "top"
+            y = value_f - offset
+        if abs(value_f) < 1e-9:
+            y = 0 + offset
+            va = "bottom"
+            label = f"0{suffix}"
+        ax.text(bar.get_x() + bar.get_width() / 2, y, label, ha="center", va=va, fontsize=8)
 
 
 def render_citus_worker_figure(df: pd.DataFrame, output: Path) -> None:
@@ -1959,7 +2381,7 @@ def render_paper_text(
 
 ### 实验动机与设计
 
-第2章指出，基于 Leader 的共识复制和副本调度机制是分布式数据库区别于单机数据库的重要安全边界。为避免将受控实验表述为产品漏洞复现，本文将实验二定位为“共识 Leader 节点压力攻击与网络扰动下的可用性评估”。实验使用同一 TiDB 集群，通过 `SHOW TABLE ... REGIONS` 定位热点键所在 Region 的初始 Leader Store，并由 PD API 映射到具体 TiKV 容器。随后在正常基线、Leader CPU 压力、Leader 网络扰动以及 CPU 压力下应用侧限流四组场景中运行相同读写混合负载，记录正常期、扰动期和恢复期的吞吐量、成功请求平均延迟、成功请求 P95/P99 延迟、失败率、TiKV CPU/内存和恢复时间，并保留 Leader 位置变化作为补充观测。每组场景独立重复运行 5 次，折线图以 95% 置信区间阴影展示成功请求 P99 延迟恢复曲线。
+第2章指出，基于 Leader 的共识复制和副本调度机制是分布式数据库区别于单机数据库的重要安全边界。为避免将受控实验表述为产品漏洞复现，本文将实验二定位为“共识 Leader 节点压力攻击与网络扰动下的可用性评估”。实验使用同一 TiDB 集群，通过 `SHOW TABLE ... REGIONS` 定位热点键所在 Region 的初始 Leader Store，并由 PD API 映射到具体 TiKV 容器。随后在正常基线、Leader CPU 压力、Leader 网络扰动以及 CPU 压力下应用侧限流四组场景中运行相同读写混合负载，记录正常期、扰动期和恢复期的吞吐量、成功请求平均延迟、成功请求 P95/P99 延迟、失败率、TiKV CPU/内存和恢复时间，并保留 Leader 位置变化作为补充观测。每组场景独立重复运行 5 次，折线图以 95% 置信区间阴影展示成功请求 P99 延迟恢复曲线。需要强调的是，本实验采用秒级短时故障注入窗口，用于观察受控容器集群的可用性退化和恢复趋势，不将该时间尺度解释为生产数据库的恢复 SLA。
 
 ### 结果与分析
 

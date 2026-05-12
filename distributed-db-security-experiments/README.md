@@ -140,7 +140,7 @@ python3 scripts/analyze_results.py
 - `leader_network_perturbation`：对热点 Region Leader 所在 TiKV 容器注入网络扰动；不支持 `tc/netem` 时自动降级为短时容器暂停模拟。
 - `leader_cpu_stress_limited`：在相同 Leader CPU 压力下使用较低客户端并发，评估应用侧限流的缓解效果。
 
-每个场景默认包含正常期 4 秒、扰动期 6 秒和恢复期 6 秒；每组 5 次独立重复。P95/P99 延迟按成功请求统计，失败请求通过失败率单独报告。恢复时间定义为恢复期内业务成功吞吐量达到正常期 90%，且成功请求 P99 延迟不高于正常期 110% 的最早时间。
+每个场景默认包含正常期 4 秒、扰动期 6 秒和恢复期 6 秒；每组 5 次独立重复。这里的相对时间轴是受控容器环境中的短时故障注入窗口，用于观察可用性退化和恢复趋势，不代表生产数据库恢复 SLA。P95/P99 延迟按成功请求统计，失败请求通过失败率单独报告。恢复时间定义为恢复期内业务成功吞吐量达到正常期 90%，且成功请求 P99 延迟不高于正常期 110% 的最早时间。若要观察分钟级调度或更接近生产的恢复过程，可增大 `--baseline-s`、`--perturb-s` 和 `--recovery-s` 后重跑实验。
 
 ## 实验三：跨分片事务异步窗口下的抢占式提交模拟
 
@@ -211,8 +211,11 @@ python3 scripts/analyze_results.py
 - `results/figures/exp1_shard_load_changes.png`：90% 热点流量下各分片物理负载对比图，误差线表示 95% 置信区间。
 - `results/figures/exp1_citus_worker_load.png`：PostgreSQL+Citus 热点流量下节点峰值 CPU 对比图，误差线表示 95% 置信区间。
 - `results/figures/exp1_tidb_tikv_load.png`：TiDB 热点流量下 TiKV 峰值 CPU 对比图，误差线表示 95% 置信区间。
-- `results/figures/exp2_tidb_p99_recovery_curve.png`：TiDB Leader 扰动前后成功请求 P99 延迟与恢复曲线，阴影表示 95% 置信区间。
-- `results/figures/exp3_frontrun_defense_overhead.png`：跨分片抢占式提交成功率与防御开销对比图，误差线表示 95% 置信区间。
+- `results/figures/exp1_distribution_multiplot.png`：实验一 2x2 组图，包含 PostgreSQL 物理分片负载、PostgreSQL+Citus 节点峰值 CPU、TiDB TiKV 峰值 CPU，以及热点比例升高时 P99 延迟变化折线图。
+- `results/figures/exp2_tidb_p99_recovery_curve.png`：TiDB Leader 短时扰动前后成功请求 P99 延迟与恢复曲线，阴影表示 95% 置信区间。
+- `results/figures/exp2_tidb_leader_multiplot.png`：实验二组图，包含成功吞吐量、失败率、成功请求 P99 延迟和目标 TiKV 峰值 CPU 四个子图。
+- `results/figures/exp3_frontrun_defense_overhead.png`：实验三组图，包含抢占式提交成功率、违规/回滚、事务吞吐量和 P95 延迟开销四个子图。
+- `results/figures/exp3_frontrun_multiplot.png`：实验三组图副本，便于论文组图排版引用。
 - `paper/section_4_append_text.md`：可直接并入论文第4章的实验一、实验二与实验三文字。
 - `paper/reviewer_response.md`：回复审稿意见的补充实验说明。
 
