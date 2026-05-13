@@ -1,8 +1,8 @@
 # 分布式数据库安全补充实验
 
-本目录用于补充论文第4章的分布式架构级攻击与防御评估。当前已完成实验一、实验二与实验三：实验一包含 PostgreSQL 三分片机制模拟、PostgreSQL+Citus 分布式扩展对照，以及 TiDB 真实分布式数据库热点键对照；实验二评估 TiDB 热点 Region Leader 所在 TiKV 节点遭遇 CPU 压力或网络扰动时的可用性退化与恢复过程；实验三使用 PostgreSQL 三分片环境模拟跨分片事务异步窗口下的抢占式提交风险和防御代价。
+本目录用于补充论文第4章的分布式架构级攻击与防御评估。当前已完成实验一、实验二与实验三：实验一包含 PostgreSQL 三分片确定性路由攻击与混淆路由模拟防御、PostgreSQL+Citus 分布式扩展对照，以及 TiDB 真实分布式数据库对照；实验二评估 TiDB 热点 Region Leader 所在 TiKV 节点遭遇 CPU 压力或网络扰动时的可用性退化与恢复过程；实验三使用 PostgreSQL 三分片环境模拟跨分片事务异步窗口下的抢占式提交风险和防御代价。
 
-## 实验一：单分片泛洪攻击与防御评估
+## 实验一：确定性路由攻击与混淆路由防御评估
 
 ### 定位说明
 
@@ -12,7 +12,8 @@ PostgreSQL 原生不提供 TiDB 这类内置分布式分片、Region 或 Leader 
 
 - Docker Compose：启动 3 个 PostgreSQL 分片容器；当前服务器本地 `postgres:latest` 镜像实测为 PostgreSQL 18.3。
 - Python：使用 `psycopg2` 执行读写混合负载，使用 `pandas` 和 `matplotlib` 生成汇总表与图。
-- 分片规则：`item_id % 3`，热点键固定路由到 `shard-0`。
+- 确定性路由：`shard_id = item_id % 3`。目标流量由攻击者按公开规则筛选一批 `item_id % 3 == 0` 的 key，因此会集中到 `shard-0`。
+- 混淆路由模拟：`bucket = sha256(f"{secret_salt}:{item_id}".encode()).digest()[0] % 64`，再由虚拟桶映射到 3 个物理分片，用于隐藏或改变 key 到分片的真实映射。
 - 资源限制：每个 PostgreSQL 分片限制为 2 vCPU、2 GiB 内存。该配置用于当前服务器可复现实验，报告中不将结果泛化为生产容量。
 - PostgreSQL 18 镜像的数据卷挂载在 `/var/lib/postgresql`，以兼容官方 18+ 镜像的数据目录布局。
 - PostgreSQL+Citus 对照默认使用 `citusdata/citus:12.1` 镜像；当前服务器已缓存 `citusdata/citus:12.1.6`，可通过 `CITUS_IMAGE=citusdata/citus:12.1.6` 复用本地镜像。
@@ -24,12 +25,11 @@ PostgreSQL 原生不提供 TiDB 这类内置分布式分片、Region 或 Leader 
 docker run --rm postgres:latest postgres --version
 ```
 
-### 防御组
+### 路由/防御组
 
-- `baseline`：无防御。
-- `shard_limit`：对单分片并发设置上限，超限请求快速失败。
-- `hot_key_limit`：对热点 `item_id` 并发设置上限，超限请求快速失败。
-- `queue_isolation`：热点请求进入独立队列；热点读请求使用缓存/副本式分流模拟，非热点请求保留独立执行资源。
+- `deterministic`：确定性路由基线，使用公开 `item_id % 3`。
+- `obfuscated`：混淆路由模拟，使用带 secret salt 的哈希虚拟桶重映射。
+- `obfuscated_control`：混淆路由叠加每个物理分片的流量控制；保留限流思想，但正文不作为重点展开。
 
 ### 运行命令
 
@@ -182,7 +182,7 @@ python3 scripts/analyze_results.py
 - `results/raw/exp1_shard_resource_samples.csv`：分片 CPU、内存、连接数、活跃事务采样，包含 `run_id`。
 - `results/raw/exp1_citus_hotspot_requests.csv`：PostgreSQL+Citus 逐请求原始记录，包含 `run_id`。
 - `results/raw/exp1_citus_resource_samples.csv`：Citus 协调节点/工作节点 CPU、内存采样，包含 `run_id`。
-- `results/raw/exp1_citus_shard_placements.csv`：热点键对应 Citus 分片与工作节点位置观测，包含 `run_id`。
+- `results/raw/exp1_citus_shard_placements.csv`：Citus 对照中目标 key 对应分片与工作节点位置观测，包含 `run_id`。
 - `results/raw/exp1_tidb_hotspot_requests.csv`：TiDB 逐请求原始记录，包含 `run_id`。
 - `results/raw/exp1_tidb_tikv_resource_samples.csv`：TiKV CPU、内存采样，包含 `run_id`。
 - `results/raw/exp1_tidb_region_observations.csv`：TiDB 表 Region、Leader Store 与 PD 热点 Region 观测，包含 `run_id`。
@@ -192,7 +192,7 @@ python3 scripts/analyze_results.py
 - `results/raw/exp2_tidb_perturbation_events.csv`：实验二扰动开始/停止事件与实际注入方式。
 - `results/raw/exp3_cross_shard_transactions.csv`：实验三逐事务原始记录，包含 `run_id`、事务角色、提交时间、延迟、回滚和成功状态。
 - `results/raw/exp3_cross_shard_pairs.csv`：实验三 victim/attacker 事务对结果，包含抢占式提交、顺序违规和一致性违规标识。
-- `results/tables/table_A_single_shard_flood.md`：论文可用表 A，合并 PostgreSQL 三分片、PostgreSQL+Citus 与 TiDB，正文仅保留均值简表。
+- `results/tables/table_A_single_shard_flood.md`：论文可用表 A，合并 PostgreSQL 三分片、PostgreSQL+Citus 与 TiDB，正文仅保留均值简表，并包含热点物理负载比。
 - `results/tables/table_A_single_shard_flood_full.md`：表 A 补充材料，保留完整均值±标准差、P95、业务成功吞吐量和节点资源采样。
 - `results/tables/exp1_single_shard_flood_summary.csv`：PostgreSQL 三分片结构化汇总结果，包含均值、标准差和 95% 置信区间半宽。
 - `results/tables/exp1_citus_hotspot_summary.csv`：PostgreSQL+Citus 对照汇总结果，包含均值、标准差和 95% 置信区间半宽。
@@ -208,12 +208,12 @@ python3 scripts/analyze_results.py
 - `results/tables/exp2_tidb_leader_transfer_summary.csv`：实验二 Leader 位置变化补充观测汇总。
 - `results/tables/table_C_cross_shard_frontrun.md`：论文可用表 C，汇总跨分片事务抢占式提交模拟结果。
 - `results/tables/exp3_cross_shard_frontrun_summary.csv`：实验三结构化汇总结果，包含均值、标准差和 95% 置信区间半宽。
-- `results/figures/exp1_shard_load_changes.png`：90% 热点流量下各分片物理负载对比图，误差线表示 95% 置信区间。
-- `results/figures/exp1_citus_worker_load.png`：PostgreSQL+Citus 热点流量下节点峰值 CPU 对比图，误差线表示 95% 置信区间。
-- `results/figures/exp1_tidb_tikv_load.png`：TiDB 热点流量下 TiKV 峰值 CPU 对比图，误差线表示 95% 置信区间。
-- `results/figures/exp1_distribution_multiplot.png`：实验一 2x2 组图，包含 PostgreSQL 物理分片负载、PostgreSQL+Citus 节点峰值 CPU、TiDB TiKV 峰值 CPU，以及热点比例升高时 P99 延迟变化折线图。
+- `results/figures/exp1_shard_load_changes.png`：90% 目标流量下各分片物理负载对比图，误差线表示 95% 置信区间。
+- `results/figures/exp1_citus_worker_load.png`：PostgreSQL+Citus 目标流量下节点峰值 CPU 对比图，误差线表示 95% 置信区间。
+- `results/figures/exp1_tidb_tikv_load.png`：TiDB 目标流量下 TiKV 峰值 CPU 对比图，误差线表示 95% 置信区间。
+- `results/figures/exp1_distribution_multiplot.png`：实验一 2x2 组图，包含 PostgreSQL 物理分片负载、PostgreSQL+Citus 节点峰值 CPU、TiDB TiKV 峰值 CPU，以及目标比例升高时 P99 延迟变化折线图。
 - `results/figures/exp2_tidb_p99_recovery_curve.png`：TiDB Leader 短时扰动前后成功请求 P99 延迟与恢复曲线，阴影表示 95% 置信区间。
-- `results/figures/exp2_tidb_leader_multiplot.png`：实验二组图，包含成功吞吐量、失败率、成功请求 P99 延迟和目标 TiKV 峰值 CPU 四个子图。
+- `results/figures/exp2_tidb_leader_multiplot.png`：实验二组图，包含成功吞吐量、成功请求 P99 延迟、目标 TiKV 峰值 CPU 和短时扰动 P99 恢复曲线四个子图；失败率保留在表 B。
 - `results/figures/exp3_frontrun_defense_overhead.png`：实验三组图，包含抢占式提交成功率、违规/回滚、事务吞吐量和 P95 延迟开销四个子图。
 - `results/figures/exp3_frontrun_multiplot.png`：实验三组图副本，便于论文组图排版引用。
 - `paper/section_4_append_text.md`：可直接并入论文第4章的实验一、实验二与实验三文字。

@@ -3,12 +3,14 @@
 
 The router intentionally models legitimate application traffic. Every request is
 syntactically normal SQL, so the experiment measures data-distribution pressure
-rather than SQL-injection detection.
+rather than SQL-injection detection. Experiment 1 compares a public deterministic
+route with an obfuscated route that hides the key-to-shard mapping.
 """
 
 from __future__ import annotations
 
 import os
+import hashlib
 import subprocess
 import threading
 import time
@@ -113,11 +115,16 @@ class DefenseController:
         shard_limit: int = 36,
         hot_key_limit: int = 2,
         queue_hot_limit: int = 12,
+        traffic_control_limit: int = 30,
     ) -> None:
         self.defense = defense
         self.hot_keys = set(hot_keys)
         self._shard_limits = {
             shard_id: threading.BoundedSemaphore(shard_limit)
+            for shard_id in range(SHARD_COUNT)
+        }
+        self._traffic_control_limits = {
+            shard_id: threading.BoundedSemaphore(traffic_control_limit)
             for shard_id in range(SHARD_COUNT)
         }
         self._hot_key_limit = hot_key_limit
@@ -126,8 +133,14 @@ class DefenseController:
         self._queue_hot_limit = threading.BoundedSemaphore(queue_hot_limit)
 
     def before(self, spec: RequestSpec, target_shard: int) -> Tuple[str, Optional[Tuple[str, object]]]:
-        if self.defense == "baseline":
+        if self.defense in {"deterministic", "obfuscated", "baseline"}:
             return "db", None
+
+        if self.defense == "obfuscated_control":
+            sem = self._traffic_control_limits[target_shard]
+            if not sem.acquire(timeout=0.250):
+                raise RateLimited("traffic_control")
+            return "db", ("semaphore", sem)
 
         if self.defense == "shard_limit":
             sem = self._shard_limits[target_shard]
@@ -176,18 +189,35 @@ class ShardRouter:
         max_connections_per_shard: int = 24,
         statement_timeout_ms: int = 1200,
         pool_timeout_s: float = 1.0,
+        route_salt: str = "chapter3-obfuscated-routing",
+        virtual_buckets: int = 64,
+        traffic_control_limit: int = 30,
     ) -> None:
         self.defense = defense
         self.pool_timeout_s = pool_timeout_s
+        self.route_salt = route_salt
+        self.virtual_buckets = max(virtual_buckets, SHARD_COUNT)
+        self.bucket_to_shard = [bucket % SHARD_COUNT for bucket in range(self.virtual_buckets)]
+        self.route_strategy = "obfuscated" if defense in {"obfuscated", "obfuscated_control"} else "deterministic"
         self.managers = [
             ConnectionManager(i, dsn, max_connections_per_shard, statement_timeout_ms)
             for i, dsn in enumerate(dsns)
         ]
-        self.defense_controller = DefenseController(defense, hot_keys)
+        self.defense_controller = DefenseController(defense, hot_keys, traffic_control_limit=traffic_control_limit)
+
+    def route(self, item_id: int) -> int:
+        if self.route_strategy == "obfuscated":
+            return self.obfuscated_route(item_id)
+        return self.deterministic_route(item_id)
 
     @staticmethod
-    def route(item_id: int) -> int:
+    def deterministic_route(item_id: int) -> int:
         return item_id % SHARD_COUNT
+
+    def obfuscated_route(self, item_id: int) -> int:
+        digest = hashlib.sha256(f"{self.route_salt}:{item_id}".encode()).digest()
+        bucket = digest[0] % self.virtual_buckets
+        return self.bucket_to_shard[bucket]
 
     def execute(self, spec: RequestSpec) -> RequestResult:
         target_shard = self.route(spec.item_id)

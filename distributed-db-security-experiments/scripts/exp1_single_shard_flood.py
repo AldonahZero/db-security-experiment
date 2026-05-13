@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run experiment 1: single-shard flood and defense comparison."""
+"""Run experiment 1: deterministic routing attack and obfuscated routing defense."""
 
 from __future__ import annotations
 
@@ -31,9 +31,9 @@ SCENARIOS: Dict[str, float] = {
     "hot90": 0.90,
 }
 
-DEFENSES = ["baseline", "shard_limit", "hot_key_limit", "queue_isolation"]
+DEFENSES = ["deterministic", "obfuscated", "obfuscated_control"]
 OPERATIONS = (("select", 0.70), ("update", 0.20), ("insert", 0.10))
-HOT_KEYS = [3000, 3003, 3006, 3009, 3012]
+TARGET_SHARD_KEYS = list(range(3000, 12000, 3))
 
 
 class ResourceSampler:
@@ -104,10 +104,13 @@ def main() -> int:
                 router = ShardRouter(
                     dsns=dsns,
                     defense=defense,
-                    hot_keys=HOT_KEYS,
+                    hot_keys=TARGET_SHARD_KEYS,
                     max_connections_per_shard=args.max_connections_per_shard,
                     statement_timeout_ms=args.statement_timeout_ms,
                     pool_timeout_s=args.pool_timeout_s,
+                    route_salt=args.route_salt,
+                    virtual_buckets=args.virtual_buckets,
+                    traffic_control_limit=args.traffic_control_limit,
                 )
                 sampler = ResourceSampler(dsns, run_id, scenario, defense, interval_s=args.sample_interval_s)
                 sampler.start()
@@ -144,9 +147,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--concurrency", type=int, default=96, help="client worker concurrency")
     parser.add_argument("--db-sleep-ms", type=float, default=12.0, help="simulated per-query service time")
     parser.add_argument("--max-connections-per-shard", type=int, default=36)
+    parser.add_argument("--traffic-control-limit", type=int, default=30)
     parser.add_argument("--statement-timeout-ms", type=int, default=1200)
     parser.add_argument("--pool-timeout-s", type=float, default=1.0)
     parser.add_argument("--sample-interval-s", type=float, default=0.5)
+    parser.add_argument("--route-salt", default="chapter3-obfuscated-routing")
+    parser.add_argument("--virtual-buckets", type=int, default=64)
     parser.add_argument("--seed", type=int, default=20260511)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--out-dir", default="results/raw")
@@ -187,11 +193,11 @@ def build_workload(
     for request_id in range(requests):
         is_hot = hot_fraction > 0 and rng.random() < hot_fraction
         if is_hot:
-            item_id = rng.choice(HOT_KEYS)
+            item_id = rng.choice(TARGET_SHARD_KEYS)
         elif scenario == "uniform":
             item_id = rng.randint(1, 9000)
         else:
-            item_id = non_hot_key(rng)
+            item_id = non_target_key(rng)
         specs.append(
             RequestSpec(
                 request_id=request_id,
@@ -208,7 +214,7 @@ def build_workload(
     return specs
 
 
-def non_hot_key(rng: random.Random) -> int:
+def non_target_key(rng: random.Random) -> int:
     shard = rng.choice([1, 2])
     base = rng.randint(1, 3000) * 3
     return base + shard

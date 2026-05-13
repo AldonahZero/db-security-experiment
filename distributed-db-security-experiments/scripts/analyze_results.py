@@ -14,6 +14,9 @@ import pandas as pd
 
 
 DEFENSE_LABELS = {
+    "deterministic": "确定性路由",
+    "obfuscated": "混淆路由模拟",
+    "obfuscated_control": "混淆路由+流量控制",
     "baseline": "无防御",
     "shard_limit": "分片级限流",
     "hot_key_limit": "热点键限流",
@@ -22,8 +25,8 @@ DEFENSE_LABELS = {
 
 SCENARIO_LABELS = {
     "uniform": "均匀流量",
-    "hot70": "70% 热点流量",
-    "hot90": "90% 热点流量",
+    "hot70": "70% 目标分片流量",
+    "hot90": "90% 目标分片流量",
 }
 
 SHARD_LABELS = {
@@ -101,6 +104,7 @@ EXP3_DEFENSE_LABELS = {
 }
 
 EXP3_DEFENSE_ORDER = ["baseline", "global_sequence", "occ", "conflict_key_queue", "two_phase_commit"]
+RATE_LIMIT_ERRORS = {"traffic_control", "shard_limit", "hot_key_limit", "hot_queue_full"}
 
 
 def main() -> int:
@@ -364,7 +368,7 @@ def write_chinese_csv(df: pd.DataFrame, output: Path, kind: str) -> None:
         "single": {
             "run_count": "重复次数",
             "scenario": "场景",
-            "defense": "防御策略",
+            "defense": "路由/防御策略",
             "requests": "请求数",
             "success_rate_pct": "成功率(%)",
             "failure_rate_pct": "失败率(%)",
@@ -641,11 +645,15 @@ def summarize_requests(df: pd.DataFrame) -> pd.DataFrame:
     for (run_id, scenario, defense), group in df.groupby(["run_id", "scenario", "defense"], sort=False):
         duration = max(group["end_ts"].max() - group["start_ts"].min(), 0.001)
         success = group[group["success"] == True]  # noqa: E712
-        limited = group[group["error"].isin(["shard_limit", "hot_key_limit", "hot_queue_full"])]
+        limited = group[group["error"].isin(RATE_LIMIT_ERRORS)]
         timeout = group[group["error"].astype(str).str.contains("timeout", na=False)]
         latencies = group["latency_ms"].astype(float)
+        physical = group[
+            group["physical_shard"].astype(str).str.startswith("shard-")
+            & ~group["error"].astype(str).isin(RATE_LIMIT_ERRORS)
+        ]
         physical_counts = (
-            success[success["physical_shard"].astype(str).str.startswith("shard-")]
+            physical
             .groupby("physical_shard")
             .size()
             .to_dict()
@@ -682,11 +690,12 @@ def summarize_requests(df: pd.DataFrame) -> pd.DataFrame:
     per_run["uniform_p95_overhead_pct"] = math.nan
     for run_id, run_group in per_run[per_run["scenario"] == "uniform"].groupby("run_id", sort=False):
         uniform = run_group.set_index("defense")
-        if "baseline" not in uniform.index:
+        base_defense = "deterministic" if "deterministic" in uniform.index else "baseline"
+        if base_defense not in uniform.index:
             continue
-        base_qps = float(uniform.loc["baseline", "qps"])
-        base_success_qps = float(uniform.loc["baseline", "success_qps"])
-        base_p95 = float(uniform.loc["baseline", "p95_latency_ms"])
+        base_qps = float(uniform.loc[base_defense, "qps"])
+        base_success_qps = float(uniform.loc[base_defense, "success_qps"])
+        base_p95 = float(uniform.loc[base_defense, "p95_latency_ms"])
         mask = (per_run["run_id"] == run_id) & (per_run["scenario"] == "uniform")
         per_run.loc[mask, "uniform_qps_overhead_pct"] = (
             (per_run.loc[mask, "qps"] - base_qps) / base_qps * 100.0
@@ -1140,33 +1149,31 @@ def render_table_a(
     tidb_summary: pd.DataFrame,
 ) -> str:
     lines = [
-        "# 表A：单分片泛洪攻击与防御效果评估",
+        "# 表A：确定性路由攻击与混淆路由防御效果评估",
         "",
     ]
     cols = [
         "实验环境",
         "热点比例",
-        "策略",
-        "成功率(%)",
+        "路由/防御策略",
         "限流率/失败率(%)",
-        "吞吐量(请求/s)",
+        "处理吞吐量(请求/s)",
         "平均延迟(ms)",
         "P99延迟(ms)",
+        "热点物理负载比",
     ]
     lines.append("|" + "|".join(cols) + "|")
     lines.append("|---|---:|---|---:|---:|---:|---:|---:|")
 
     lookup = summary.set_index(["scenario", "defense"])
     postgres_rows = [
-        ("uniform", "baseline", "0%"),
-        ("hot70", "baseline", "70%"),
-        ("hot70", "shard_limit", "70%"),
-        ("hot70", "hot_key_limit", "70%"),
-        ("hot70", "queue_isolation", "70%"),
-        ("hot90", "baseline", "90%"),
-        ("hot90", "shard_limit", "90%"),
-        ("hot90", "hot_key_limit", "90%"),
-        ("hot90", "queue_isolation", "90%"),
+        ("uniform", "deterministic", "0%"),
+        ("uniform", "obfuscated", "0%"),
+        ("hot70", "deterministic", "70%"),
+        ("hot70", "obfuscated", "70%"),
+        ("hot90", "deterministic", "90%"),
+        ("hot90", "obfuscated", "90%"),
+        ("hot90", "obfuscated_control", "90%"),
     ]
     for scenario, defense, hotspot_pct in postgres_rows:
         if (scenario, defense) not in lookup.index:
@@ -1179,11 +1186,11 @@ def render_table_a(
                     "PostgreSQL三分片",
                     hotspot_pct,
                     DEFENSE_LABELS.get(defense, defense),
-                    fmt(row["success_rate_pct"]),
-                    fmt(row["rate_limited_pct"]),
+                    fmt(row["failure_rate_pct"]),
                     fmt(row["qps"]),
                     fmt(row["avg_latency_ms"]),
                     fmt(row["p99_latency_ms"]),
+                    fmt(row["hot_physical_load_ratio"]),
                 ]
             )
             + "|"
@@ -1191,11 +1198,7 @@ def render_table_a(
 
     if not citus_summary.empty:
         citus_lookup = citus_summary.set_index("scenario")
-        citus_rows = [
-            ("citus_uniform", "0%"),
-            ("citus_hot70", "70%"),
-            ("citus_hot90", "90%"),
-        ]
+        citus_rows = [("citus_hot90", "90%")]
         for scenario, hotspot_pct in citus_rows:
             if scenario not in citus_lookup.index:
                 continue
@@ -1207,11 +1210,11 @@ def render_table_a(
                         "PostgreSQL+Citus",
                         hotspot_pct,
                         "原生分布式扩展",
-                        fmt(row["success_rate_pct"]),
                         fmt(row["failure_rate_pct"]),
                         fmt(row["qps"]),
                         fmt(row["avg_latency_ms"]),
                         fmt(row["p99_latency_ms"]),
+                        "-",
                     ]
                 )
                 + "|"
@@ -1219,11 +1222,7 @@ def render_table_a(
 
     if not tidb_summary.empty:
         tidb_lookup = tidb_summary.set_index("scenario")
-        tidb_rows = [
-            ("tidb_uniform", "0%"),
-            ("tidb_hot70", "70%"),
-            ("tidb_hot90", "90%"),
-        ]
+        tidb_rows = [("tidb_hot90", "90%")]
         for scenario, hotspot_pct in tidb_rows:
             if scenario not in tidb_lookup.index:
                 continue
@@ -1235,11 +1234,11 @@ def render_table_a(
                         "TiDB",
                         hotspot_pct,
                         "原生调度",
-                        fmt(row["success_rate_pct"]),
                         fmt(row["failure_rate_pct"]),
                         fmt(row["qps"]),
                         fmt(row["avg_latency_ms"]),
                         fmt(row["p99_latency_ms"]),
+                        "-",
                     ]
                 )
                 + "|"
@@ -1248,8 +1247,9 @@ def render_table_a(
     lines.extend(
         [
             "",
-            "注：表中数值为多次重复实验的均值；限流/失败率在 PostgreSQL 三分片中表示被主动限流的请求比例，在 Citus/TiDB 中表示失败请求比例。"
-            "吞吐量为系统处理请求吞吐，包含被快速拒绝的限流请求；完整均值±标准差和资源采样结果见补充材料。",
+            "注：表中数值为多次重复实验的均值；PostgreSQL 三分片中，70%/90% 目标流量表示攻击者按公开规则筛选出 `item_id % 3 == 0` 的 key 集合。"
+            "混淆路由使用带 secret salt 的哈希虚拟桶重映射，热点物理负载比为分片0已路由物理请求量与分片1、分片2平均请求量之比；主动限流请求不计入物理请求量。"
+            "Citus/TiDB 作为原生系统对照，未计算该 PostgreSQL 机制模拟指标。",
         ]
     )
     return "\n".join(lines)
@@ -1386,7 +1386,7 @@ def render_supplemental_table_a(
 ) -> str:
     cols = [
         "场景",
-        "防御策略",
+        "路由/防御策略",
         "成功率(%)",
         "限流率(%)",
         "总处理吞吐量(请求/秒)",
@@ -1398,7 +1398,7 @@ def render_supplemental_table_a(
         "均匀流量业务成功吞吐量变化(%)",
     ]
     lines = [
-        "# 补充表S1：单分片泛洪攻击与防御完整结果",
+        "# 补充表S1：确定性路由攻击与混淆路由防御完整结果",
         "",
         "注：表中主要数值为 5 次重复实验的均值±标准差；正文表 A 仅保留均值简表。",
         "",
@@ -1429,12 +1429,12 @@ def render_supplemental_table_a(
         )
     lines.append("")
     lines.append(
-        "注：热点物理负载比为分片0的成功数据库请求量与分片1、分片2平均请求量之比；"
-        "队列隔离/读分流组中的缓存命中不计入物理分片请求。"
+        "注：目标流量由攻击者按公开确定性规则筛选 `item_id % 3 == 0` 的 key 集合构造；"
+        "热点物理负载比为公开目标分片0的已路由物理请求量与分片1、分片2平均请求量之比，主动限流请求不计入物理请求量。"
     )
     section_no = 2
     if not citus_summary.empty:
-        lines.extend(["", f"## 补充表S1-{section_no}：PostgreSQL+Citus 分布式扩展热点键对照", ""])
+        lines.extend(["", f"## 补充表S1-{section_no}：PostgreSQL+Citus 分布式扩展对照", ""])
         section_no += 1
         citus_cols = [
             "系统",
@@ -1501,7 +1501,7 @@ def render_supplemental_table_a(
                 + "|"
             )
     if not tidb_summary.empty:
-        lines.extend(["", f"## 补充表S1-{section_no}：TiDB 真实分布式数据库热点键对照", ""])
+        lines.extend(["", f"## 补充表S1-{section_no}：TiDB 真实分布式数据库对照", ""])
         section_no += 1
         tidb_cols = [
             "系统",
@@ -1633,7 +1633,7 @@ def render_exp1_multiplot(
     output: Path,
 ) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(13.2, 8.6))
-    fig.suptitle("实验一：单分片泛洪与分布式热点负载组图（n=5，误差线/阴影为95%置信区间）", fontsize=13)
+    fig.suptitle("实验一：确定性路由攻击与混淆路由防御组图（n=5，误差线/阴影为95%置信区间）", fontsize=13)
     draw_exp1_shard_load_axis(axes[0, 0], requests)
     draw_exp1_resource_axis(
         axes[0, 1],
@@ -1660,10 +1660,16 @@ def draw_exp1_shard_load_axis(ax, df: pd.DataFrame) -> None:
         ax.text(0.5, 0.5, "无数据", transform=ax.transAxes, ha="center", va="center")
         return
     df = ensure_run_id(df)
-    hot = df[(df["scenario"] == "hot90") & (df["success"] == True)].copy()  # noqa: E712
-    hot = hot[hot["physical_shard"].astype(str).str.startswith("shard-")]
+    hot = df[df["scenario"] == "hot90"].copy()
+    hot = hot[
+        hot["physical_shard"].astype(str).str.startswith("shard-")
+        & ~hot["error"].astype(str).isin(RATE_LIMIT_ERRORS)
+    ]
     run_ids = sorted(df["run_id"].dropna().unique())
-    defenses = ["baseline", "shard_limit", "hot_key_limit", "queue_isolation"]
+    observed = set(df["defense"].astype(str))
+    defenses = [item for item in ["deterministic", "obfuscated", "obfuscated_control"] if item in observed]
+    if not defenses:
+        defenses = [item for item in ["baseline", "shard_limit", "hot_key_limit", "queue_isolation"] if item in observed]
     shards = ["shard-0", "shard-1", "shard-2"]
     counts = hot.groupby(["run_id", "defense", "physical_shard"]).size().rename("requests")
     full_index = pd.MultiIndex.from_product([run_ids, defenses, shards], names=["run_id", "defense", "physical_shard"])
@@ -1685,8 +1691,8 @@ def draw_exp1_shard_load_axis(ax, df: pd.DataFrame) -> None:
             label=SHARD_LABELS.get(shard, shard),
             color=colors[idx],
         )
-    ax.set_title("A. 90%热点流量下 PostgreSQL 物理分片负载")
-    ax.set_ylabel("成功数据库请求数")
+    ax.set_title("A. 90%目标流量下 PostgreSQL 物理分片负载")
+    ax.set_ylabel("已路由物理请求数")
     ax.set_xticks(list(x), [DEFENSE_LABELS.get(item, item) for item in means.index], rotation=14, ha="right")
     ax.legend(title="物理分片", fontsize=8, title_fontsize=9)
     ax.grid(axis="y", alpha=0.25)
@@ -1730,8 +1736,8 @@ def draw_exp1_resource_axis(ax, df: pd.DataFrame, scenarios: List[str], title: s
 def draw_exp1_p99_line_axis(ax, summary: pd.DataFrame, citus_summary: pd.DataFrame, tidb_summary: pd.DataFrame) -> None:
     hotspot = [0, 70, 90]
     series = [
-        ("PostgreSQL无防御", summary, ["uniform", "hot70", "hot90"], "baseline", "#C94C4C"),
-        ("PostgreSQL队列隔离", summary, ["uniform", "hot70", "hot90"], "queue_isolation", "#4C78A8"),
+        ("PostgreSQL确定性路由", summary, ["uniform", "hot70", "hot90"], "deterministic", "#C94C4C"),
+        ("PostgreSQL混淆路由", summary, ["uniform", "hot70", "hot90"], "obfuscated", "#4C78A8"),
         ("PostgreSQL+Citus", citus_summary, ["citus_uniform", "citus_hot70", "citus_hot90"], None, "#F28E2B"),
         ("TiDB", tidb_summary, ["tidb_uniform", "tidb_hot70", "tidb_hot90"], None, "#59A14F"),
     ]
@@ -1755,8 +1761,8 @@ def draw_exp1_p99_line_axis(ax, summary: pd.DataFrame, citus_summary: pd.DataFra
         ci_series = pd.Series(cis, dtype="float")
         ax.plot(hotspot, y, marker="o", linewidth=2, label=label, color=color)
         ax.fill_between(hotspot, (y - ci_series).clip(lower=0), y + ci_series, color=color, alpha=0.12)
-    ax.set_title("D. 热点比例升高时的 P99 延迟变化")
-    ax.set_xlabel("热点请求比例(%)")
+    ax.set_title("D. 目标流量比例升高时的 P99 延迟变化")
+    ax.set_xlabel("目标请求比例(%)")
     ax.set_ylabel("P99延迟(ms)")
     ax.set_xticks(hotspot, ["0", "70", "90"])
     ax.grid(alpha=0.25)
@@ -1774,10 +1780,16 @@ def exp1_summary_row(frame: pd.DataFrame, scenario: str, defense: object) -> Opt
 
 def render_shard_load_figure(df: pd.DataFrame, output: Path) -> None:
     df = ensure_run_id(df)
-    hot = df[(df["scenario"] == "hot90") & (df["success"] == True)].copy()  # noqa: E712
-    hot = hot[hot["physical_shard"].astype(str).str.startswith("shard-")]
+    hot = df[df["scenario"] == "hot90"].copy()
+    hot = hot[
+        hot["physical_shard"].astype(str).str.startswith("shard-")
+        & ~hot["error"].astype(str).isin(RATE_LIMIT_ERRORS)
+    ]
     run_ids = sorted(df["run_id"].dropna().unique())
-    defenses = ["baseline", "shard_limit", "hot_key_limit", "queue_isolation"]
+    observed = set(df["defense"].astype(str))
+    defenses = [item for item in ["deterministic", "obfuscated", "obfuscated_control"] if item in observed]
+    if not defenses:
+        defenses = [item for item in ["baseline", "shard_limit", "hot_key_limit", "queue_isolation"] if item in observed]
     shards = ["shard-0", "shard-1", "shard-2"]
     counts = hot.groupby(["run_id", "defense", "physical_shard"]).size().rename("requests")
     full_index = pd.MultiIndex.from_product([run_ids, defenses, shards], names=["run_id", "defense", "physical_shard"])
@@ -1806,9 +1818,9 @@ def render_shard_load_figure(df: pd.DataFrame, output: Path) -> None:
             color=colors[idx],
         )
     plt.xticks(list(x), [DEFENSE_LABELS.get(item, item) for item in means.index], rotation=0)
-    plt.ylabel("成功数据库请求数")
+    plt.ylabel("已路由物理请求数")
     plt.xlabel("防御策略")
-    plt.title("90% 热点流量下的物理分片负载（误差线为95%置信区间）")
+    plt.title("90% 目标流量下的物理分片负载（误差线为95%置信区间）")
     plt.legend(title="物理分片", loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0)
     plt.tight_layout()
     plt.savefig(output, dpi=180)
@@ -1843,10 +1855,10 @@ def render_tidb_tikv_figure(df: pd.DataFrame, output: Path) -> None:
             label=node_label(container),
             color=colors[idx % len(colors)],
         )
-    plt.xticks(list(x), ["均匀流量", "70% 热点流量", "90% 热点流量"])
+    plt.xticks(list(x), ["均匀流量", "70% 目标流量", "90% 目标流量"])
     plt.ylabel("峰值 CPU(%)")
     plt.xlabel("流量场景")
-    plt.title("TiDB 热点流量下的 TiKV 节点负载（误差线为95%置信区间）")
+    plt.title("TiDB 目标流量下的 TiKV 节点负载（误差线为95%置信区间）")
     plt.legend(title="节点", loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0)
     plt.tight_layout()
     plt.savefig(output, dpi=180)
@@ -1856,56 +1868,12 @@ def render_tidb_tikv_figure(df: pd.DataFrame, output: Path) -> None:
 def render_exp2_recovery_figure(df: pd.DataFrame, output: Path) -> None:
     if df.empty:
         return
-    df = ensure_run_id(df).copy()
-    successful = df[df["success"] == True].copy()  # noqa: E712
-    if not successful.empty:
-        df = successful
-    df["second_bin"] = df["relative_s"].astype(float).floordiv(1).astype(int)
-    per_run = (
-        df.groupby(["run_id", "scenario", "second_bin"])["latency_ms"]
-        .quantile(0.99)
-        .reset_index(name="p99_latency_ms")
-    )
-    stats = (
-        per_run.groupby(["scenario", "second_bin"])["p99_latency_ms"]
-        .agg(["mean", "std", "count"])
-        .reset_index()
-    )
-    stats["ci95"] = stats["std"].fillna(0) * 1.96 / stats["count"].pow(0.5)
-    baseline_s = float(df["baseline_s"].dropna().iloc[0]) if "baseline_s" in df.columns else 4.0
-    perturb_s = float(df["perturb_s"].dropna().iloc[0]) if "perturb_s" in df.columns else 6.0
-    scenarios = [
-        "baseline",
-        "leader_cpu_stress",
-        "leader_network_perturbation",
-        "leader_cpu_stress_limited",
-    ]
-    colors = {
-        "baseline": "#4C78A8",
-        "leader_cpu_stress": "#C94C4C",
-        "leader_network_perturbation": "#F28E2B",
-        "leader_cpu_stress_limited": "#59A14F",
-    }
-    plt.figure(figsize=(9.8, 5.4))
-    plt.axvspan(baseline_s, baseline_s + perturb_s, color="#9E9E9E", alpha=0.18, label="扰动期")
-    for scenario in scenarios:
-        subset = stats[stats["scenario"] == scenario].sort_values("second_bin")
-        if subset.empty:
-            continue
-        x = subset["second_bin"].astype(float)
-        mean = subset["mean"].astype(float)
-        ci = subset["ci95"].fillna(0).astype(float)
-        plt.plot(x, mean, label=EXP2_SCENARIO_LABELS.get(scenario, scenario), color=colors.get(scenario), linewidth=2)
-        plt.fill_between(x, (mean - ci).clip(lower=0), mean + ci, color=colors.get(scenario), alpha=0.12)
-    plt.axvline(baseline_s, color="#555555", linewidth=1, linestyle="--")
-    plt.axvline(baseline_s + perturb_s, color="#555555", linewidth=1, linestyle="--")
-    plt.xlabel("短时故障注入相对时间(s)")
-    plt.ylabel("成功请求P99延迟(ms)")
-    plt.title("TiDB Leader 短时扰动前后成功请求 P99 延迟曲线（阴影为95%置信区间）")
-    plt.legend(title="场景", loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0)
-    plt.tight_layout()
-    plt.savefig(output, dpi=180)
-    plt.close()
+    fig, ax = plt.subplots(figsize=(9.8, 5.4))
+    draw_exp2_p99_curve_axis(ax, df, "TiDB Leader 短时扰动前后成功请求 P99 延迟曲线")
+    ax.legend(title="场景", loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0)
+    fig.tight_layout()
+    fig.savefig(output, dpi=180)
+    plt.close(fig)
 
 
 def render_exp2_multiplot(requests: pd.DataFrame, resources: pd.DataFrame, output: Path) -> None:
@@ -1914,7 +1882,6 @@ def render_exp2_multiplot(requests: pd.DataFrame, resources: pd.DataFrame, outpu
     requests = ensure_run_id(requests).copy()
     scenarios = ["leader_cpu_stress", "leader_network_perturbation", "leader_cpu_stress_limited"]
     phases = ["normal", "perturbation", "recovery"]
-    phase_labels = [EXP2_PHASE_LABELS[phase] for phase in phases]
     scenario_labels = [EXP2_SCENARIO_LABELS[scenario].replace("Leader", "") for scenario in scenarios]
     colors = {"normal": "#4C78A8", "perturbation": "#C94C4C", "recovery": "#59A14F"}
 
@@ -1924,7 +1891,6 @@ def render_exp2_multiplot(requests: pd.DataFrame, resources: pd.DataFrame, outpu
             continue
         duration = phase_duration(group)
         success = group[group["success"] == True]  # noqa: E712
-        failure_rate = pct(len(group) - len(success), len(group))
         p99 = success["latency_ms"].astype(float).quantile(0.99) if not success.empty else math.nan
         rows.append(
             {
@@ -1932,7 +1898,6 @@ def render_exp2_multiplot(requests: pd.DataFrame, resources: pd.DataFrame, outpu
                 "scenario": scenario,
                 "phase": phase,
                 "success_qps": len(success) / duration,
-                "failure_rate_pct": failure_rate,
                 "success_p99_latency_ms": p99,
             }
         )
@@ -1970,40 +1935,78 @@ def render_exp2_multiplot(requests: pd.DataFrame, resources: pd.DataFrame, outpu
         metric_stats,
         scenarios,
         phases,
-        "failure_rate_pct",
-        "失败率(%)",
-        "B. 失败率变化",
-        scenario_labels,
-        colors,
-    )
-    draw_exp2_phase_bars(
-        axes[1, 0],
-        metric_stats,
-        scenarios,
-        phases,
         "success_p99_latency_ms",
         "成功请求P99延迟(ms)",
-        "C. 成功请求尾延迟",
+        "B. 成功请求尾延迟",
         scenario_labels,
         colors,
         annotate_missing=True,
     )
     draw_exp2_phase_bars(
-        axes[1, 1],
+        axes[1, 0],
         cpu_stats,
         scenarios,
         phases,
         "target_peak_cpu_pct",
         "目标TiKV峰值CPU(%)",
-        "D. 目标Leader节点资源压力",
+        "C. 目标Leader节点资源压力",
         scenario_labels,
         colors,
     )
+    draw_exp2_p99_curve_axis(axes[1, 1], requests, "D. 成功请求P99延迟恢复曲线", legend=False)
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, title="阶段", loc="upper center", bbox_to_anchor=(0.5, 0.965), ncol=3)
+    line_handles, line_labels = axes[1, 1].get_legend_handles_labels()
+    fig.legend(handles, labels, title="阶段", loc="upper center", bbox_to_anchor=(0.35, 0.965), ncol=3)
+    fig.legend(line_handles, line_labels, title="曲线场景", loc="upper center", bbox_to_anchor=(0.76, 0.965), ncol=2)
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     fig.savefig(output, dpi=180)
     plt.close(fig)
+
+
+def draw_exp2_p99_curve_axis(ax, df: pd.DataFrame, title: str, legend: bool = True) -> None:
+    if df.empty:
+        ax.text(0.5, 0.5, "无数据", transform=ax.transAxes, ha="center", va="center")
+        ax.set_title(title)
+        return
+    df = ensure_run_id(df).copy()
+    successful = df[df["success"] == True].copy()  # noqa: E712
+    if not successful.empty:
+        df = successful
+    df["second_bin"] = df["relative_s"].astype(float).floordiv(1).astype(int)
+    per_run = (
+        df.groupby(["run_id", "scenario", "second_bin"])["latency_ms"]
+        .quantile(0.99)
+        .reset_index(name="p99_latency_ms")
+    )
+    stats = per_run.groupby(["scenario", "second_bin"])["p99_latency_ms"].agg(["mean", "std", "count"]).reset_index()
+    stats["ci95"] = stats["std"].fillna(0) * 1.96 / stats["count"].pow(0.5)
+    baseline_s = float(df["baseline_s"].dropna().iloc[0]) if "baseline_s" in df.columns else 4.0
+    perturb_s = float(df["perturb_s"].dropna().iloc[0]) if "perturb_s" in df.columns else 6.0
+    scenarios = ["baseline", "leader_cpu_stress", "leader_network_perturbation", "leader_cpu_stress_limited"]
+    colors = {
+        "baseline": "#4C78A8",
+        "leader_cpu_stress": "#C94C4C",
+        "leader_network_perturbation": "#F28E2B",
+        "leader_cpu_stress_limited": "#59A14F",
+    }
+    ax.axvspan(baseline_s, baseline_s + perturb_s, color="#9E9E9E", alpha=0.18)
+    for scenario in scenarios:
+        subset = stats[stats["scenario"] == scenario].sort_values("second_bin")
+        if subset.empty:
+            continue
+        x = subset["second_bin"].astype(float)
+        mean = subset["mean"].astype(float)
+        ci = subset["ci95"].fillna(0).astype(float)
+        ax.plot(x, mean, label=EXP2_SCENARIO_LABELS.get(scenario, scenario), color=colors.get(scenario), linewidth=2)
+        ax.fill_between(x, (mean - ci).clip(lower=0), mean + ci, color=colors.get(scenario), alpha=0.12)
+    ax.axvline(baseline_s, color="#555555", linewidth=1, linestyle="--")
+    ax.axvline(baseline_s + perturb_s, color="#555555", linewidth=1, linestyle="--")
+    ax.set_xlabel("短时故障注入相对时间(s)")
+    ax.set_ylabel("成功请求P99延迟(ms)")
+    ax.set_title(title)
+    ax.grid(alpha=0.25)
+    if legend:
+        ax.legend(title="场景", fontsize=8, title_fontsize=9)
 
 
 def exp2_plot_stats(df: pd.DataFrame, group_cols: List[str]) -> pd.DataFrame:
@@ -2231,10 +2234,10 @@ def render_citus_worker_figure(df: pd.DataFrame, output: Path) -> None:
             label=node_label(container),
             color=colors[idx % len(colors)],
         )
-    plt.xticks(list(x), ["均匀流量", "70% 热点流量", "90% 热点流量"])
+    plt.xticks(list(x), ["均匀流量", "70% 目标流量", "90% 目标流量"])
     plt.ylabel("峰值 CPU(%)")
     plt.xlabel("流量场景")
-    plt.title("PostgreSQL+Citus 热点流量下的节点负载（误差线为95%置信区间）")
+    plt.title("PostgreSQL+Citus 目标流量下的节点负载（误差线为95%置信区间）")
     plt.legend(title="节点", loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0)
     plt.tight_layout()
     plt.savefig(output, dpi=180)
@@ -2258,14 +2261,16 @@ def render_paper_text(
     def v(scenario: str, defense: str, column: str) -> float:
         return float(lookup.loc[(scenario, defense), column])
 
-    base_p99 = v("hot90", "baseline", "p99_latency_ms")
-    queue_p99 = v("hot90", "queue_isolation", "p99_latency_ms")
-    base_ratio = v("hot90", "baseline", "hot_physical_load_ratio")
-    queue_ratio = v("hot90", "queue_isolation", "hot_physical_load_ratio")
-    shard_limited = v("hot90", "shard_limit", "rate_limited_pct")
-    hotkey_limited = v("hot90", "hot_key_limit", "rate_limited_pct")
-    uniform_queue_qps = v("uniform", "queue_isolation", "uniform_qps_overhead_pct")
-    uniform_shard_p95 = v("uniform", "shard_limit", "uniform_p95_overhead_pct")
+    det_p99 = v("hot90", "deterministic", "p99_latency_ms")
+    obf_p99 = v("hot90", "obfuscated", "p99_latency_ms")
+    det_ratio = v("hot90", "deterministic", "hot_physical_load_ratio")
+    obf_ratio = v("hot90", "obfuscated", "hot_physical_load_ratio")
+    control_ratio = v("hot90", "obfuscated_control", "hot_physical_load_ratio")
+    control_fail = v("hot90", "obfuscated_control", "failure_rate_pct")
+    det70_ratio = v("hot70", "deterministic", "hot_physical_load_ratio")
+    obf70_ratio = v("hot70", "obfuscated", "hot_physical_load_ratio")
+    uniform_obf_qps = v("uniform", "obfuscated", "uniform_qps_overhead_pct")
+    uniform_obf_p95 = v("uniform", "obfuscated", "uniform_p95_overhead_pct")
 
     citus_text = "PostgreSQL+Citus 扩展对照实验尚未生成结果；本节先保留脚本和表结构，待镜像与资源就绪后补充实测值。"
     if not citus_summary.empty:
@@ -2279,8 +2284,8 @@ def render_paper_text(
             placement_lookup = citus_placement_summary.set_index("scenario")
             if "citus_hot90" in placement_lookup.index:
                 placement_text = (
-                    f"90% 热点流量后观测到 {fmt_count(placement_lookup.loc['citus_hot90', 'shard_count'])} 个 Citus 逻辑分片，"
-                    f"热点键所在工作节点为 {node_list_label(placement_lookup.loc['citus_hot90', 'hotspot_worker'])}"
+                    f"90% 目标流量后观测到 {fmt_count(placement_lookup.loc['citus_hot90', 'shard_count'])} 个 Citus 逻辑分片，"
+                    f"对应热点分片所在工作节点为 {node_list_label(placement_lookup.loc['citus_hot90', 'hotspot_worker'])}"
                 )
         citus_resource_text = ""
         if not citus_resource_summary.empty:
@@ -2295,7 +2300,7 @@ def render_paper_text(
             f"PostgreSQL+Citus 对照使用 1 个协调节点与 3 个工作节点，"
             f"通过 Citus 扩展将 `citus_items` 和 `citus_events` 按 `item_id` 分布式分片。"
             f"在 Citus 原生分布式执行路径下，均匀流量 P99 延迟为 {citus_uniform_p99:.2f} ms，"
-            f"90% 热点键流量 P99 延迟为 {citus_hot90_p99:.2f} ms，吞吐量为 {citus_hot90_qps:.2f} 请求/秒，"
+            f"90% 目标流量 P99 延迟为 {citus_hot90_p99:.2f} ms，吞吐量为 {citus_hot90_qps:.2f} 请求/秒，"
             f"失败率为 {citus_hot90_fail:.2f}%。{placement_text}。{citus_resource_text}"
         )
 
@@ -2310,7 +2315,7 @@ def render_paper_text(
             region_lookup = tidb_region_summary.set_index("scenario")
             if "tidb_hot90" in region_lookup.index:
                 leader_text = (
-                    f"90% 热点流量后观测到 {fmt_count(region_lookup.loc['tidb_hot90', 'observed_regions'])} 个表 Region，"
+                    f"90% 目标流量后观测到 {fmt_count(region_lookup.loc['tidb_hot90', 'observed_regions'])} 个表 Region，"
                     f"Leader 存储节点 ID 为 {region_lookup.loc['tidb_hot90', 'leader_store_ids']}"
                 )
         tikv_text = ""
@@ -2324,7 +2329,7 @@ def render_paper_text(
             f"通过 `SPLIT TABLE` 将测试表拆分为多个 Region；本次环境中 `SCATTER TABLE` 语句未被当前 TiDB 语法接受，"
             f"因此以实际采集到的 Region/Leader 分布作为对照观测。"
             f"在 TiDB 原生调度下，均匀流量 P99 延迟为 {tidb_uniform_p99:.2f} ms，"
-            f"90% 热点键流量 P99 延迟为 {tidb_hot90_p99:.2f} ms，吞吐量为 {tidb_hot90_qps:.2f} 请求/秒。"
+            f"90% 目标流量 P99 延迟为 {tidb_hot90_p99:.2f} ms，吞吐量为 {tidb_hot90_qps:.2f} 请求/秒。"
             f"{leader_text}。{tikv_text}"
         )
 
@@ -2364,6 +2369,11 @@ def render_paper_text(
             if "leader_cpu_stress_limited" in exp2_lookup.index
             else math.nan
         )
+        limited_recovery_time = (
+            e("leader_cpu_stress_limited", "recovery_time_s")
+            if "leader_cpu_stress_limited" in exp2_lookup.index
+            else math.nan
+        )
         peak_text = ""
         if not exp2_resource_summary.empty:
             target_samples = exp2_resource_summary[
@@ -2381,11 +2391,11 @@ def render_paper_text(
 
 ### 实验动机与设计
 
-第2章指出，基于 Leader 的共识复制和副本调度机制是分布式数据库区别于单机数据库的重要安全边界。为避免将受控实验表述为产品漏洞复现，本文将实验二定位为“共识 Leader 节点压力攻击与网络扰动下的可用性评估”。实验使用同一 TiDB 集群，通过 `SHOW TABLE ... REGIONS` 定位热点键所在 Region 的初始 Leader Store，并由 PD API 映射到具体 TiKV 容器。随后在正常基线、Leader CPU 压力、Leader 网络扰动以及 CPU 压力下应用侧限流四组场景中运行相同读写混合负载，记录正常期、扰动期和恢复期的吞吐量、成功请求平均延迟、成功请求 P95/P99 延迟、失败率、TiKV CPU/内存和恢复时间，并保留 Leader 位置变化作为补充观测。每组场景独立重复运行 5 次，折线图以 95% 置信区间阴影展示成功请求 P99 延迟恢复曲线。需要强调的是，本实验采用秒级短时故障注入窗口，用于观察受控容器集群的可用性退化和恢复趋势，不将该时间尺度解释为生产数据库的恢复 SLA。
+第2章指出，基于 Leader 的共识复制和副本调度机制是分布式数据库区别于单机数据库的重要安全边界。为避免将受控实验表述为产品漏洞复现，本文将实验二定位为“共识 Leader 节点压力攻击与网络扰动下的可用性评估”。实验使用同一 TiDB 集群，通过 `SHOW TABLE ... REGIONS` 定位热点键所在 Region 的初始 Leader Store，并由 PD API 映射到具体 TiKV 容器。随后在正常基线、Leader CPU 压力、Leader 网络扰动以及 CPU 压力下应用侧限流四组场景中运行相同读写混合负载，记录正常期、扰动期和恢复期的吞吐量、成功请求平均延迟、成功请求 P95/P99 延迟、失败率、TiKV CPU/内存和恢复时间，并保留 Leader 位置变化作为补充观测。每组场景独立重复运行 5 次。实验二组图包含成功吞吐量、成功请求 P99 延迟、目标 TiKV 峰值 CPU 和短时扰动 P99 恢复曲线四个子图；柱状图误差线和折线图阴影均表示 95% 置信区间。需要强调的是，本实验采用秒级短时故障注入窗口，用于观察受控容器集群的可用性退化和恢复趋势，不将该时间尺度解释为生产数据库的恢复 SLA。
 
 ### 结果与分析
 
-在 Leader CPU 压力组中，扰动期成功吞吐量相对正常期下降 {cpu_drop:.2f}%，成功请求 P99 延迟由 {cpu_normal_p99:.2f} ms 上升到 {cpu_perturb_p99:.2f} ms，恢复到正常期 90% 吞吐且成功请求 P99 不高于正常期 110% 的时间为 {cpu_recovery_time:.2f} s。网络扰动组的成功吞吐量下降 {network_drop:.2f}%，扰动期失败率为 {network_fail:.2f}%，恢复时间为 {network_recovery_time:.2f} s。应用侧限流组在相同 CPU 压力下注入下的成功吞吐量下降为 {limited_drop:.2f}%，扰动期成功请求 P99 延迟为 {limited_p99:.2f} ms，说明限流能够降低部分尾延迟压力，但会以主动压低吞吐作为代价。{peak_text}
+在 Leader CPU 压力组中，扰动期成功吞吐量相对正常期下降 {cpu_drop:.2f}%，成功请求 P99 延迟由 {cpu_normal_p99:.2f} ms 上升到 {cpu_perturb_p99:.2f} ms，恢复到正常期 90% 吞吐且成功请求 P99 不高于正常期 110% 的时间为 {cpu_recovery_time:.2f} s。网络扰动组的成功吞吐量下降 {network_drop:.2f}%，扰动期失败率为 {network_fail:.2f}%，恢复时间为 {network_recovery_time:.2f} s。应用侧限流组在相同 CPU 压力下注入下的成功吞吐量下降为 {limited_drop:.2f}%，扰动期成功请求 P99 延迟为 {limited_p99:.2f} ms，恢复时间为 {limited_recovery_time:.2f} s，说明限流能够降低部分尾延迟压力，但会以主动压低吞吐作为代价。{peak_text}
 
 该结果表明，Leader 所在节点遭遇资源压力或网络扰动时，即使请求本身仍是合法 SQL，系统可用性也会出现可观退化；客户端限流和集群恢复机制可以缓解部分影响，但恢复过程存在非零时间窗口。因此，分布式数据库安全评估不能只覆盖应用层注入或认证问题，也需要纳入共识层和调度层韧性指标。
 """
@@ -2422,7 +2432,7 @@ def render_paper_text(
 
 ### 实验动机与设计
 
-跨分片事务在用户校验、库存扣减和订单确认之间需要经过多个分片，处理阶段与提交阶段之间天然存在异步窗口。本文使用 PostgreSQL 三分片环境构造可控模拟：shard-0 存放用户资格，shard-1 存放商品库存，shard-2 存放订单确认。每个事务对包含先到达的 `T_victim` 和后到达的 `T_attacker`，其中 `T_victim` 在完成用户资格校验后被人为延迟，`T_attacker` 在该窗口内尝试先完成库存扣减和订单写入。实验比较无防御、全局序列号、版本检查/OCC、冲突键队列化和两阶段提交模拟五组策略。每组策略独立重复运行 5 次，记录抢占式提交成功率、业务顺序违规率、事务回滚率、吞吐量、平均延迟和 P95/P99 延迟。
+跨分片事务在用户校验、库存扣减和订单确认之间需要经过多个分片，处理阶段与提交阶段之间天然存在异步窗口。本文使用 PostgreSQL 三分片环境构造可控模拟：shard-0 存放用户资格，shard-1 存放商品库存，shard-2 存放订单确认。每个事务对包含先到达的 `T_victim` 和后到达的 `T_attacker`，其中 `T_victim` 在完成用户资格校验后被人为延迟，`T_attacker` 在该窗口内尝试先完成库存扣减和订单写入。实验比较无防御、全局序列号、版本检查/OCC、冲突键队列化和两阶段提交模拟五组策略。每组策略独立重复运行 5 次，记录抢占式提交成功率、业务顺序违规率、事务回滚率、吞吐量、平均延迟和 P95/P99 延迟。实验三组图包含抢占式提交成功率、违规/回滚比例、事务吞吐量和 P95 延迟开销四个子图，误差线表示 95% 置信区间。
 
 ### 结果与分析
 
@@ -2433,17 +2443,17 @@ def render_paper_text(
 
 ## 实验动机
 
-第2章将数据分发机制风险列为分布式数据库的重要攻击面。与 SQL 注入不同，单分片泛洪流量通常由合法查询、更新和插入组成，外围 WAF/IDS 很难仅根据语法特征区分其攻击性。为量化该类风险，本文采用“PostgreSQL 三分片机制模拟 + PostgreSQL+Citus 分布式扩展对照 + TiDB 真实分布式数据库对照”的设计：第一部分使用路由层按 `item_id mod 3` 将请求分发到分片0、分片1和分片2，并比较无防御、分片级限流、热点键限流、队列隔离/读分流四类策略；第二部分使用 Citus 扩展构造 PostgreSQL 协调节点/工作节点分布式拓扑，观察插件化分片后热点键对单个 Citus 分片和工作节点的影响；第三部分使用 1 TiDB Server、3 TiKV、3 PD 的最小集群，观察热点键流量下 Region/Leader 与 TiKV 负载变化。
+第2章将数据分发机制风险列为分布式数据库的重要攻击面，第3章表15将“混淆路由”列为降低攻击者精准命中分片能力的防御思路。与 SQL 注入不同，确定性路由攻击流量通常由合法查询、更新和插入组成，外围 WAF/IDS 很难仅根据语法特征区分其攻击性。为量化该类风险，本文采用“PostgreSQL 三分片机制模拟 + PostgreSQL+Citus 分布式扩展对照 + TiDB 真实分布式数据库对照”的设计：第一部分使用路由层比较公开确定性路由 `item_id mod 3` 与混淆路由 `sha256(secret_salt:item_id)` 虚拟桶映射；第二部分使用 Citus 扩展构造 PostgreSQL 协调节点/工作节点分布式拓扑，作为插件化分布式执行对照；第三部分使用 1 TiDB Server、3 TiKV、3 PD 的最小集群，作为真实分布式数据库调度对照。
 
 ## 实验设计
 
-实验设置三种流量分布：均匀流量、70% 请求集中到热点键范围、90% 请求集中到热点键范围。每组请求采用 70% `SELECT`、20% `UPDATE`、10% `INSERT` 的读写混合负载。所有请求均为正常 SQL 访问，实验不依赖注入载荷或异常语法。PostgreSQL 机制模拟记录吞吐量、平均延迟、P95/P99 延迟、失败率、限流率和每个分片的物理请求量；PostgreSQL+Citus 对照记录协调节点/工作节点拓扑下的吞吐量、平均延迟、P95/P99 延迟、失败率、工作节点 CPU/内存负载，以及热点键对应的 Citus 分片放置；TiDB 对照记录吞吐量、平均延迟、P95/P99 延迟、失败率、TiKV CPU/内存负载，以及 `SHOW TABLE ... REGIONS` 和 PD 热点 Region 接口观测到的 Region/Leader 信息。每个场景和配置均独立重复运行 5 次，正文主表仅报告均值，完整均值±标准差及节点资源采样见补充材料；柱状图误差线表示 95% 置信区间。
+实验设置三种流量分布：均匀流量、70% 目标分片流量、90% 目标分片流量。目标流量不使用单个热点 key，而是由攻击者按公开规则筛选一批 `item_id % 3 == 0` 的 key；在确定性路由下这些请求集中到分片0，在混淆路由下真实映射变为带 secret salt 的哈希虚拟桶并重新分散到3个物理分片。每组请求采用 70% `SELECT`、20% `UPDATE`、10% `INSERT` 的读写混合负载。PostgreSQL 机制模拟比较确定性路由、混淆路由模拟和混淆路由+流量控制三组策略，并记录吞吐量、平均延迟、P95/P99 延迟、失败率、限流率和热点物理负载比；PostgreSQL+Citus 与 TiDB 保留为原生系统对照，记录吞吐量、延迟、失败率和节点资源负载。每个场景和配置均独立重复运行 5 次，正文主表仅报告均值，完整均值±标准差及节点资源采样见补充材料。实验一组图包含 PostgreSQL 物理分片负载、PostgreSQL+Citus 节点峰值 CPU、TiDB TiKV 峰值 CPU 和目标比例升高时 P99 延迟变化四个子图；柱状图误差线和折线图阴影均表示 95% 置信区间。
 
 ## 结果与分析
 
-在 90% 热点流量下，无防御组的热点物理负载比达到 {base_ratio:.2f}，P99 延迟为 {base_p99:.2f} ms，说明合法热点请求会将压力集中到单个分片并抬高尾延迟。队列隔离/读分流将热点物理负载比降至 {queue_ratio:.2f}，P99 延迟为 {queue_p99:.2f} ms，表明将热点读流量转移到缓存/副本模拟路径、并对热点写请求使用独立队列，可以降低热点分片对整体处理路径的阻塞。分片级限流和热点键限流分别在 90% 热点流量下触发 {shard_limited:.2f}% 和 {hotkey_limited:.2f}% 的限流，通过牺牲部分热点请求的即时成功率换取尾延迟和非热点请求保护。
+在 90% 目标分片流量下，确定性路由组的热点物理负载比达到 {det_ratio:.2f}，P99 延迟为 {det_p99:.2f} ms，说明攻击者只要知道 `item_id mod 3` 规则，就能用一批正常 key 将压力集中到公开目标分片。混淆路由模拟将同一批目标 key 重新分散，热点物理负载比降至 {obf_ratio:.2f}，P99 延迟为 {obf_p99:.2f} ms；在 70% 目标分片流量下，热点物理负载比也由 {det70_ratio:.2f} 降至 {obf70_ratio:.2f}。混淆路由+流量控制在 90% 目标流量下的热点物理负载比为 {control_ratio:.2f}，限流/失败率为 {control_fail:.2f}%，说明其可以进一步保护过载路径，但代价是主动拒绝部分请求。
 
-在正常均匀流量下，队列隔离/读分流的吞吐量变化为 {uniform_queue_qps:.2f}%，分片级限流的 P95 延迟变化为 {uniform_shard_p95:.2f}%。这说明防御机制并非无成本：限流、队列调度和读分流会引入一定调度开销，且在参数设置过紧时可能降低正常请求吞吐。因此，单分片泛洪防御应结合业务容量进行阈值校准，而不能只依赖静态规则。
+在正常均匀流量下，混淆路由模拟的总处理吞吐量变化为 {uniform_obf_qps:.2f}%，P95 延迟变化为 {uniform_obf_p95:.2f}%。这说明混淆路由主要改变 key 到分片的映射关系，本身并不依赖识别异常 SQL；如果叠加流量控制，仍需要结合业务容量校准阈值，避免把正常突发流量误判为攻击流量。
 
 {citus_text}
 
@@ -2455,7 +2465,7 @@ def render_paper_text(
 
 ## 评测边界
 
-需要说明的是，分布式架构级攻击通常与具体系统实现、部署拓扑、共识协议版本及云平台权限模型高度相关。直接复现某一产品级共识漏洞或云基础设施攻击，不仅需要特定历史版本和故障注入条件，也可能引入较高的安全与伦理风险。因此，本实验采用“机制复现 + 插件化分布式 PostgreSQL 对照 + 真实系统对照”的方式进行评估：使用 PostgreSQL 三分片环境抽象复现单分片泛洪风险和跨分片事务异步窗口风险，并量化限流、热点键隔离、队列化、全局排序、OCC 和两阶段提交等机制的防御代价；使用 PostgreSQL+Citus 观察 PG 扩展分片后热点键对 Citus 分片和工作节点的影响；使用 TiDB 集群观察真实分布式数据库在热点键负载和 Leader 扰动下的 Region/Leader、TiKV 负载、可用性退化与恢复过程。该设计并不声称覆盖所有分布式数据库攻击类型，也不声称复现 TiDB 产品级共识漏洞或产品级跨分片事务漏洞，而是用于量化第2章所讨论的典型架构级风险在受控实验条件下的影响边界和防御代价。
+需要说明的是，分布式架构级攻击通常与具体系统实现、部署拓扑、共识协议版本及云平台权限模型高度相关。直接复现某一产品级共识漏洞或云基础设施攻击，不仅需要特定历史版本和故障注入条件，也可能引入较高的安全与伦理风险。因此，本实验采用“机制复现 + 插件化分布式 PostgreSQL 对照 + 真实系统对照”的方式进行评估：使用 PostgreSQL 三分片环境抽象复现确定性路由可预测性风险和跨分片事务异步窗口风险，并量化混淆路由、流量控制、全局排序、OCC 和两阶段提交等机制的防御代价；使用 PostgreSQL+Citus 与 TiDB 观察原生分布式执行/调度路径下的热点负载表现；使用 TiDB 集群观察 Leader 扰动下的 Region/Leader、TiKV 负载、可用性退化与恢复过程。该设计并不声称覆盖所有分布式数据库攻击类型，也不声称复现 TiDB 产品级共识漏洞或产品级跨分片事务漏洞，而是用于量化第2章和第3章所讨论的典型架构级风险与防御机制在受控实验条件下的影响边界和代价。
 """
 
 
@@ -2474,8 +2484,9 @@ def render_reviewer_response(has_exp2: bool, has_exp3: bool) -> str:
     )
     return (
         "感谢审稿专家指出理论分类与实证评估覆盖度之间的匹配问题。根据该意见，本文在第4章补充了分布式架构级攻击防御评估。"
-        "首先，本文新增“单分片泛洪攻击与限流/负载均衡防御评估”，采用“PostgreSQL 三分片机制模拟 + PostgreSQL+Citus 分布式扩展对照 + TiDB 真实分布式数据库对照”的方式，"
-        "构造均匀流量、70% 热点流量和 90% 热点流量，并比较无防御、分片级限流、热点键限流和请求队列隔离/读分流策略的防御效果与性能代价。"
+        "首先，本文新增“确定性路由攻击与混淆路由防御评估”，采用“PostgreSQL 三分片机制模拟 + PostgreSQL+Citus 分布式扩展对照 + TiDB 真实分布式数据库对照”的方式，"
+        "构造均匀流量、70% 目标分片流量和 90% 目标分片流量；目标流量由攻击者按公开 `item_id mod 3` 规则筛选一批 key，而非单个热点 key。"
+        "实验比较确定性路由、混淆路由模拟和混淆路由+流量控制策略，重点报告热点物理负载比、吞吐量和 P99 延迟，以对应第3章表15中的混淆路由防御思想。"
         f"{exp2_sentence}{exp3_sentence}"
         "每个场景和配置均独立重复运行 5 次，正文主表仅报告均值，完整均值±标准差及节点资源采样见补充材料，图中使用 95% 置信区间标注波动。\n\n"
         "考虑到真实共识实现漏洞、DBaaS 元数据攻击和产品级跨分片事务问题高度依赖特定系统版本、云平台权限模型和故障注入条件，"
