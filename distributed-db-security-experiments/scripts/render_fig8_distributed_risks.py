@@ -57,7 +57,7 @@ def main() -> int:
     exp2_requests = read_csv("exp2_tidb_leader_requests.csv", low_memory=False)
     exp3_summary = load_exp3_summary()
 
-    fig, axes = plt.subplots(2, 3, figsize=(18.0, 9.8), constrained_layout=True)
+    fig, axes = plt.subplots(2, 3, figsize=(18.8, 10.6), constrained_layout=True)
 
     draw_panel_a(axes[0, 0], exp1_requests)
     draw_panel_b(axes[0, 1], exp1_requests, citus_requests, tidb_requests)
@@ -75,13 +75,13 @@ def main() -> int:
 def configure_style() -> None:
     plt.rcParams.update(
         {
-            "font.size": 9,
-            "axes.titlesize": 10.5,
-            "axes.labelsize": 9,
-            "legend.fontsize": 7.5,
-            "legend.title_fontsize": 8,
-            "xtick.labelsize": 8.5,
-            "ytick.labelsize": 8.5,
+            "font.size": 14.6,
+            "axes.titlesize": 16.8,
+            "axes.labelsize": 14.6,
+            "legend.fontsize": 12.0,
+            "legend.title_fontsize": 13.0,
+            "xtick.labelsize": 13.2,
+            "ytick.labelsize": 13.2,
             "axes.unicode_minus": False,
         }
     )
@@ -197,8 +197,8 @@ def draw_grouped_bar_boxplot(
     ax.grid(axis="y", alpha=0.25)
     ax.legend(
         title=legend_title,
-        fontsize=7,
-        title_fontsize=8,
+        fontsize=12.0,
+        title_fontsize=13.0,
         loc=legend_loc,
         ncol=legend_ncol,
         framealpha=0.86,
@@ -370,7 +370,7 @@ def exp2_success_qps_by_run(requests: pd.DataFrame) -> pd.DataFrame:
 
 def draw_panel_d(ax, requests: pd.DataFrame) -> None:
     draw_exp2_dense_p99_curve_axis(ax, requests, "d) TiDB Leader 短时扰动前后 P99 恢复曲线")
-    ax.legend(fontsize=7, title_fontsize=8, loc="upper left", framealpha=0.86)
+    ax.legend(fontsize=12.0, title_fontsize=13.0, loc="upper left", framealpha=0.86)
 
 
 def draw_exp2_dense_p99_curve_axis(
@@ -431,8 +431,8 @@ def draw_exp2_dense_p99_curve_axis(
             alpha=0.12,
             zorder=1,
         )
-    ax.axvline(baseline_s, color="#555555", linewidth=1, linestyle="--")
-    ax.axvline(baseline_s + perturb_s, color="#555555", linewidth=1, linestyle="--")
+    ax.axvline(baseline_s, color=PALETTE["gray"], linewidth=1, linestyle="--")
+    ax.axvline(baseline_s + perturb_s, color=PALETTE["gray"], linewidth=1, linestyle="--")
     ax.set_xlabel("短时故障注入相对时间(s)")
     ax.set_ylabel("成功请求P99延迟(ms)")
     ax.set_title(title)
@@ -451,129 +451,73 @@ def smooth_series(values: pd.Series, window: int = 5) -> pd.Series:
 
 def draw_panel_e(ax, summary: pd.DataFrame) -> None:
     data = exp3_plot_data(summary)
-    ax.set_title("e) 跨分片事务异步窗口抢占路径")
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.axis("off")
+    if data.empty:
+        ax.text(0.5, 0.5, "无数据", transform=ax.transAxes, ha="center", va="center")
+        ax.set_title("e) 跨分片抢占结果构成")
+        return
 
-    window_start = 0.40
-    window_end = 0.84
-    victim_color = PALETTE["blue"]
-    attacker_color = PALETTE["red"]
-    shard_lanes = [
-        ("shard-0\n用户资格", 0.76),
-        ("shard-1\n商品库存", 0.48),
-        ("shard-2\n订单确认", 0.22),
-    ]
+    labels = full_exp3_labels(data.index)
+    front = data["front_run_success_pct"].astype(float).clip(lower=0, upper=100)
+    rollback = data["rollback_rate_pct"].astype(float).clip(lower=0, upper=100)
+    constrained = (100.0 - front - rollback).clip(lower=0, upper=100)
+    y = list(range(len(data.index)))
 
-    ax.annotate(
-        "",
-        xy=(0.95, 0.94),
-        xytext=(0.16, 0.94),
-        arrowprops={"arrowstyle": "->", "linewidth": 1.2, "color": "#555555"},
+    colors = {
+        "normal": PALETTE["green"],
+        "front": PALETTE["red"],
+        "rollback": PALETTE["orange"],
+    }
+    ax.barh(y, front.values, color=colors["front"], alpha=0.48, edgecolor="white", linewidth=0.8, label="抢占提交")
+    ax.barh(
+        y,
+        rollback.values,
+        left=front.values,
+        color=colors["rollback"],
+        alpha=0.48,
+        edgecolor="white",
+        linewidth=0.8,
+        label="事务回滚",
     )
-    ax.text(0.955, 0.94, "时间", ha="left", va="center", fontsize=8, color="#444444")
-
-    ax.add_patch(
-        patches.Rectangle(
-            (window_start, 0.12),
-            window_end - window_start,
-            0.76,
-            facecolor="#F2F2F2",
-            edgecolor="none",
-            alpha=0.85,
-            zorder=0,
-        )
-    )
-    for x in [window_start, window_end]:
-        ax.axvline(x, ymin=0.12, ymax=0.88, color="#8C8C8C", linestyle="--", linewidth=1.0, zorder=1)
-    ax.text(
-        (window_start + window_end) / 2,
-        0.875,
-        "T_victim 人为异步窗口",
-        ha="center",
-        va="center",
-        fontsize=8,
-        color="#555555",
+    ax.barh(
+        y,
+        constrained.values,
+        left=(front + rollback).values,
+        color=colors["normal"],
+        alpha=0.48,
+        edgecolor="white",
+        linewidth=0.8,
+        label="正常完成/顺序约束",
     )
 
-    for label, y in shard_lanes:
-        ax.hlines(y, 0.16, 0.94, color="#D6D6D6", linewidth=1.0, zorder=0)
-        ax.text(0.06, y, label, ha="center", va="center", fontsize=8.2, color="#333333")
-
-    def event_box(x: float, y: float, text: str, color: str, width: float = 0.105, height: float = 0.078) -> None:
-        ax.add_patch(
-            patches.FancyBboxPatch(
-                (x - width / 2, y - height / 2),
-                width,
-                height,
-                boxstyle="round,pad=0.012,rounding_size=0.012",
-                facecolor=mcolors.to_rgba(color, 0.12),
-                edgecolor=color,
-                linewidth=1.1,
-                zorder=3,
+    for idx, defense in enumerate(data.index):
+        segments = [
+            (float(front.loc[defense]), 0.0, "front"),
+            (float(rollback.loc[defense]), float(front.loc[defense]), "rollback"),
+            (float(constrained.loc[defense]), float(front.loc[defense] + rollback.loc[defense]), "normal"),
+        ]
+        for value, left, kind in segments:
+            if value < 4:
+                continue
+            text_color = "white" if kind in {"front", "rollback"} and value > 18 else "black"
+            ax.text(
+                left + value / 2,
+                idx,
+                f"{value:.1f}%",
+                ha="center",
+                va="center",
+                fontsize=12.4,
+                color=text_color,
             )
-        )
-        ax.text(x, y, text, ha="center", va="center", fontsize=7.4, color="#222222", zorder=4)
+        if float(front.loc[defense]) > 0 and float(front.loc[defense]) < 4:
+            ax.text(2.6, idx - 0.28, f"{float(front.loc[defense]):.2f}%", ha="left", va="center", fontsize=11.4)
 
-    def arrow(x1: float, y1: float, x2: float, y2: float, color: str, dashed: bool = False) -> None:
-        ax.annotate(
-            "",
-            xy=(x2, y2),
-            xytext=(x1, y1),
-            arrowprops={
-                "arrowstyle": "->",
-                "linewidth": 1.6,
-                "linestyle": "--" if dashed else "-",
-                "color": color,
-                "shrinkA": 7,
-                "shrinkB": 7,
-            },
-            zorder=2,
-        )
-
-    # T_victim first reaches shard-0, then waits inside the async window.
-    event_box(0.20, 0.76, "T_victim\n先到达", victim_color)
-    event_box(0.34, 0.76, "资格校验\n完成", victim_color)
-    event_box(0.90, 0.48, "恢复后\n扣减", victim_color)
-    event_box(0.91, 0.22, "订单确认\n落后", victim_color)
-    arrow(0.25, 0.76, 0.295, 0.76, victim_color)
-    arrow(0.39, 0.82, 0.82, 0.82, victim_color, dashed=True)
-    arrow(0.82, 0.78, 0.87, 0.54, victim_color)
-    arrow(0.90, 0.43, 0.91, 0.28, victim_color)
-
-    # T_attacker arrives later but consumes stock and writes the order first.
-    event_box(0.53, 0.76, "T_attacker\n后到达", attacker_color)
-    event_box(0.65, 0.48, "库存扣减\n先完成", attacker_color)
-    event_box(0.75, 0.22, "订单写入\n先提交", attacker_color)
-    arrow(0.56, 0.72, 0.62, 0.54, attacker_color)
-    arrow(0.68, 0.43, 0.73, 0.28, attacker_color)
-
-    baseline_front = None
-    if not data.empty and "baseline" in data.index:
-        baseline_front = float(data.loc["baseline", "front_run_success_pct"])
-    callout = "业务顺序反转"
-    if baseline_front is not None:
-        callout += f"\n无防御 {baseline_front:.2f}%"
-    ax.add_patch(
-        patches.FancyBboxPatch(
-            (0.50, 0.05),
-            0.35,
-            0.075,
-            boxstyle="round,pad=0.014,rounding_size=0.015",
-            facecolor=mcolors.to_rgba(attacker_color, 0.10),
-            edgecolor=attacker_color,
-            linewidth=1.0,
-            zorder=3,
-        )
-    )
-    ax.text(0.675, 0.088, callout, ha="center", va="center", fontsize=8, color="#222222", zorder=4)
-    ax.annotate(
-        "",
-        xy=(0.75, 0.28),
-        xytext=(0.75, 0.126),
-        arrowprops={"arrowstyle": "->", "linewidth": 1.1, "color": attacker_color},
-    )
+    ax.set_title("e) 跨分片抢占结果构成")
+    ax.set_xlabel("事务对占比(%)")
+    ax.set_yticks(y, labels)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 100)
+    ax.grid(axis="x", alpha=0.24)
+    ax.legend(loc="lower right", ncol=1, framealpha=0.86, fontsize=12.0)
 
 
 def draw_panel_f(ax, summary: pd.DataFrame) -> None:
@@ -596,15 +540,19 @@ def draw_panel_f(ax, summary: pd.DataFrame) -> None:
     labels = compact_exp3_labels(data.index)
     n_rows = len(data.index)
     n_cols = len(metric_specs)
-    ax.set_xlim(-1.18, n_cols)
+    ax.set_xlim(-0.22, n_cols)
     ax.set_ylim(n_rows + 0.42, -0.62)
 
     for col, (label, _, _, _) in enumerate(metric_specs):
-        ax.text(col + 0.5, -0.22, label, ha="center", va="center", fontsize=7.6, color="#333333")
+        ax.text(col + 0.5, -0.22, label, ha="center", va="center", fontsize=12.4, color="black")
 
     risk_cmap = mcolors.LinearSegmentedColormap.from_list(
         "exp3_risk",
-        ["#F8FBF8", "#F4C58E", PALETTE["red"]],
+        [
+            mcolors.to_rgba(PALETTE["gray"], 0.16),
+            mcolors.to_rgba(PALETTE["orange"], 0.58),
+            mcolors.to_rgba(PALETTE["red"], 0.92),
+        ],
     )
     column_norms = {
         column: normalized_costs(data[column].astype(float), direction)
@@ -612,7 +560,7 @@ def draw_panel_f(ax, summary: pd.DataFrame) -> None:
     }
 
     for row, (defense, label) in enumerate(zip(data.index, labels)):
-        ax.text(-0.10, row + 0.5, label, ha="right", va="center", fontsize=7.6, color="#222222")
+        ax.text(-0.05, row + 0.5, label, ha="right", va="center", fontsize=12.4, color="black", clip_on=False)
         for col, (_, column, fmt, _) in enumerate(metric_specs):
             value = float(data.loc[defense, column])
             cost = float(column_norms[column].loc[defense])
@@ -633,8 +581,8 @@ def draw_panel_f(ax, summary: pd.DataFrame) -> None:
                 format_exp3_matrix_value(value, fmt),
                 ha="center",
                 va="center",
-                fontsize=7.4,
-                color="white" if cost > 0.72 else "#222222",
+                fontsize=11.8,
+                color="white" if cost > 0.72 else "black",
             )
 
     ax.add_patch(
@@ -643,7 +591,7 @@ def draw_panel_f(ax, summary: pd.DataFrame) -> None:
             n_cols,
             n_rows,
             fill=False,
-            edgecolor="#BDBDBD",
+            edgecolor=PALETTE["gray"],
             linewidth=0.8,
         )
     )
@@ -653,8 +601,8 @@ def draw_panel_f(ax, summary: pd.DataFrame) -> None:
         "颜色越深表示风险或代价越高；吞吐量列按低吞吐着色",
         ha="right",
         va="center",
-        fontsize=6.8,
-        color="#555555",
+        fontsize=10.8,
+        color=PALETTE["gray"],
     )
 
 

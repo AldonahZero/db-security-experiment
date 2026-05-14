@@ -1,13 +1,35 @@
-# 忽略 Python 虚拟环境目录
+# Python environments
+.venv/
 venv/
-.env/
 env/
 ENV/
 
+# Local secrets and generated key material
+.env
+.env.*
+**/.env
+**/.env.*
+acra_keys/
+single-db-security-experiments/acra_keys/
 
+# Local-only documents. Keep only the two repository landing READMEs tracked.
+docs/
+*.md
+*.markdown
+*.md.bak
+*.rst
+*.adoc
+*.tex
+*.pdf
+*.doc
+*.docx
+*.ppt
+*.pptx
 *.txt
+!/README.md
+!/README_ZH.md
 
-# 可选：添加其他常见 Python 忽略项
+# Python build/cache files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -30,16 +52,25 @@ wheels/
 *.egg
 MANIFEST
 
-# 忽略 IDE 配置（如 PyCharm）
+# IDE files
 .idea/
 *.iml
 *.ipr
 *.iws
 .vscode/
 
-# 忽略日志和临时文件
+# Logs and temporary files
 logs/
 tmp/
 *.log
-# 忽略大型原始结果文件
+
+# Local platform metadata
+.cloudbase/
+
+# Large raw result files
 distributed-db-security-experiments/results/raw/
+single-db-security-experiments/results/logs/
+single-db-security-experiments/results/modsecurity/
+single-db-security-experiments/results/suricata/eve.json
+single-db-security-experiments/results/suricata/eve.json.bak
+single-db-security-experiments/results/suricata/stats.log
