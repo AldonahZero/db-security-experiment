@@ -41,6 +41,10 @@ EXP2_SCENARIO_COLORS = {
     "leader_network_perturbation": PALETTE["orange"],
     "leader_cpu_stress_limited": PALETTE["green"],
 }
+EXP2_FIGURE_SCENARIO_LABELS = {
+    **ar.EXP2_SCENARIO_LABELS,
+    "leader_network_perturbation": "目标TiKV节点暂停",
+}
 EXP3_DEFENSE_COLORS = {
     "baseline": PALETTE["red"],
     "global_sequence": PALETTE["blue"],
@@ -364,7 +368,7 @@ def draw_panel_c(ax, requests: pd.DataFrame) -> None:
     draw_grouped_bar_boxplot(
         ax,
         data,
-        groups=["CPU压力", "节点暂停", "CPU压力+\n应用侧限流"],
+        groups=["CPU压力", "目标TiKV节点暂停", "CPU压力+\n应用侧限流"],
         series=["正常期", "扰动期", "恢复期"],
         colors={"正常期": PALETTE["blue"], "扰动期": PALETTE["red"], "恢复期": PALETTE["green"]},
         title="c) TiDB Leader 扰动下成功吞吐量变化",
@@ -384,7 +388,7 @@ def exp2_success_qps_by_run(requests: pd.DataFrame) -> pd.DataFrame:
     requests = ar.ensure_run_id(requests).copy()
     scenario_labels = {
         "leader_cpu_stress": "CPU压力",
-        "leader_network_perturbation": "节点暂停",
+        "leader_network_perturbation": "目标TiKV节点暂停",
         "leader_cpu_stress_limited": "CPU压力+\n应用侧限流",
     }
     rows: List[Dict[str, object]] = []
@@ -449,7 +453,7 @@ def draw_exp2_dense_p99_curve_axis(
         ax.plot(
             x,
             smooth_mean,
-            label=ar.EXP2_SCENARIO_LABELS.get(scenario, scenario),
+            label=EXP2_FIGURE_SCENARIO_LABELS.get(scenario, scenario),
             color=color,
             linewidth=2,
             marker="o",
