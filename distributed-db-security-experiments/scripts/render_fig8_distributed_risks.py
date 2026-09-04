@@ -328,7 +328,7 @@ def draw_panel_c(ax, requests: pd.DataFrame) -> None:
     draw_grouped_bar_boxplot(
         ax,
         data,
-        groups=["CPU压力", "网络扰动", "CPU压力+\n应用侧限流"],
+        groups=["CPU压力", "节点暂停", "CPU压力+\n应用侧限流"],
         series=["正常期", "扰动期", "恢复期"],
         colors={"正常期": PALETTE["blue"], "扰动期": PALETTE["red"], "恢复期": PALETTE["green"]},
         title="c) TiDB Leader 扰动下成功吞吐量变化",
@@ -348,7 +348,7 @@ def exp2_success_qps_by_run(requests: pd.DataFrame) -> pd.DataFrame:
     requests = ar.ensure_run_id(requests).copy()
     scenario_labels = {
         "leader_cpu_stress": "CPU压力",
-        "leader_network_perturbation": "网络扰动",
+        "leader_network_perturbation": "节点暂停",
         "leader_cpu_stress_limited": "CPU压力+\n应用侧限流",
     }
     rows: List[Dict[str, object]] = []

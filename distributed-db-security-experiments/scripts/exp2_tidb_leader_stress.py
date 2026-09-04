@@ -3,7 +3,7 @@
 
 The script uses normal SQL traffic against a controlled TiDB cluster. It first
 locates the TiKV container that currently hosts the hot Region Leader, then
-injects bounded CPU pressure or network disturbance against that container.
+injects bounded CPU pressure or pauses that container for a bounded interval.
 This is an availability/recovery evaluation, not a product vulnerability test.
 """
 
@@ -33,7 +33,9 @@ import pymysql
 SCENARIOS = {
     "baseline": {"perturbation": "none", "limited": False},
     "leader_cpu_stress": {"perturbation": "cpu", "limited": False},
-    "leader_network_perturbation": {"perturbation": "network", "limited": False},
+    # Keep the legacy scenario identifier so the published raw CSV files remain
+    # directly comparable. The injected fault is a TiKV container pause.
+    "leader_network_perturbation": {"perturbation": "container_pause", "limited": False},
     "leader_cpu_stress_limited": {"perturbation": "cpu", "limited": True},
 }
 
@@ -362,9 +364,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--regions", type=int, default=6)
     parser.add_argument("--schema-settle-s", type=float, default=4.0)
     parser.add_argument("--cpu-workers", type=int, default=2)
-    parser.add_argument("--netem-delay-ms", type=int, default=350)
-    parser.add_argument("--netem-jitter-ms", type=int, default=80)
-    parser.add_argument("--netem-loss-pct", type=float, default=1.0)
     parser.add_argument("--compose-file", default="docker-compose.tidb.yml")
     parser.add_argument("--scenarios", default=",".join(SCENARIOS.keys()))
     parser.add_argument("--start-services", action="store_true")
@@ -687,8 +686,8 @@ def run_perturbation_schedule(args: argparse.Namespace, ctx: ScenarioContext, ev
     error = ""
     if ctx.perturbation == "cpu":
         method, success, error = start_cpu_stress(ctx.target_container, args.cpu_workers)
-    elif ctx.perturbation == "network":
-        method, success, error = start_network_perturbation(ctx.target_container, args)
+    elif ctx.perturbation == "container_pause":
+        method, success, error = start_container_pause(ctx.target_container)
     events.append(event_row(ctx, "start", method, success, error, start_ts))
     time.sleep(ctx.perturb_s)
     stop_ts = time.time()
@@ -697,8 +696,8 @@ def run_perturbation_schedule(args: argparse.Namespace, ctx: ScenarioContext, ev
     try:
         if ctx.perturbation == "cpu":
             stop_cpu_stress(ctx.target_container)
-        elif ctx.perturbation == "network":
-            stop_network_perturbation(ctx.target_container, method)
+        elif ctx.perturbation == "container_pause":
+            stop_container_pause(ctx.target_container)
     except Exception as exc:
         stop_success = False
         stop_error = str(exc)
@@ -749,32 +748,14 @@ def stop_cpu_stress(container: str) -> None:
     subprocess.run(["docker", "exec", container, "sh", "-c", script], check=False, capture_output=True, text=True, timeout=8)
 
 
-def start_network_perturbation(container: str, args: argparse.Namespace) -> Tuple[str, bool, str]:
-    tc_script = (
-        "command -v tc >/dev/null 2>&1 && "
-        f"tc qdisc replace dev eth0 root netem delay {args.netem_delay_ms}ms "
-        f"{args.netem_jitter_ms}ms loss {args.netem_loss_pct}%"
-    )
-    proc = subprocess.run(["docker", "exec", container, "sh", "-c", tc_script], capture_output=True, text=True, timeout=8)
-    if proc.returncode == 0:
-        return "tc_netem", True, ""
-    pause = subprocess.run(["docker", "pause", container], capture_output=True, text=True, timeout=8)
-    if pause.returncode == 0:
-        return "docker_pause_fallback", True, proc.stderr.strip() or proc.stdout.strip()
-    return "tc_netem_failed", False, (proc.stderr + pause.stderr).strip()
+def start_container_pause(container: str) -> Tuple[str, bool, str]:
+    cleanup_perturbation(container)
+    proc = subprocess.run(["docker", "pause", container], capture_output=True, text=True, timeout=8)
+    return "docker_pause", proc.returncode == 0, proc.stderr.strip()
 
 
-def stop_network_perturbation(container: str, method: str) -> None:
-    if method == "tc_netem":
-        subprocess.run(
-            ["docker", "exec", container, "sh", "-c", "tc qdisc del dev eth0 root || true"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=8,
-        )
-    elif method == "docker_pause_fallback":
-        subprocess.run(["docker", "unpause", container], check=False, capture_output=True, text=True, timeout=8)
+def stop_container_pause(container: str) -> None:
+    subprocess.run(["docker", "unpause", container], check=False, capture_output=True, text=True, timeout=8)
 
 
 def cleanup_perturbation(container: str) -> None:
@@ -784,16 +765,6 @@ def cleanup_perturbation(container: str) -> None:
         pass
     try:
         subprocess.run(["docker", "unpause", container], check=False, capture_output=True, text=True, timeout=8)
-    except Exception:
-        pass
-    try:
-        subprocess.run(
-            ["docker", "exec", container, "sh", "-c", "tc qdisc del dev eth0 root || true"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=8,
-        )
     except Exception:
         pass
 

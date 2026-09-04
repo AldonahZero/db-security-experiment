@@ -1,6 +1,6 @@
 services:
   juiceshop:
-    image: bkimminich/juice-shop
+    image: bkimminich/juice-shop:v11.1.0
     ports:
       - "3001:3000" # Juice Shop UI 端口保持不变
     cpus: 4

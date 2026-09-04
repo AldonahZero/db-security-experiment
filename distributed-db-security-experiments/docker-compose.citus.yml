@@ -1,7 +1,7 @@
 name: dbsec-exp1-citus
 
 x-citus-common: &citus-common
-  image: ${CITUS_IMAGE:-citusdata/citus:12.1}
+  image: citusdata/citus:12.1.6
   environment:
     POSTGRES_USER: expuser
     POSTGRES_PASSWORD: exp_pass_123

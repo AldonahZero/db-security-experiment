@@ -3,9 +3,9 @@
 Leader CPU压力,正常期,5,3,TiKV节点1,TiKV节点1,0.0,0.0,0.0
 Leader CPU压力,扰动期,5,3,TiKV节点1,TiKV节点1,0.0,0.0,0.0
 Leader CPU压力,恢复期,5,3,TiKV节点1,TiKV节点1,0.0,0.0,0.0
-Leader网络扰动,正常期,5,3,TiKV节点1,TiKV节点1,0.0,0.0,0.0
-Leader网络扰动,扰动期,5,3,TiKV节点1,TiKV节点1,0.0,0.0,0.0
-Leader网络扰动,恢复期,5,3,TiKV节点1,TiKV节点1,0.0,0.0,0.0
+Leader节点暂停,正常期,5,3,TiKV节点1,TiKV节点1,0.0,0.0,0.0
+Leader节点暂停,扰动期,5,3,TiKV节点1,TiKV节点1,0.0,0.0,0.0
+Leader节点暂停,恢复期,5,3,TiKV节点1,TiKV节点1,0.0,0.0,0.0
 Leader CPU压力+应用侧限流,正常期,5,3,TiKV节点1,TiKV节点1,0.0,0.0,0.0
 Leader CPU压力+应用侧限流,扰动期,5,3,TiKV节点1,TiKV节点1,0.0,0.0,0.0
 Leader CPU压力+应用侧限流,恢复期,5,3,TiKV节点1,TiKV节点1,0.0,0.0,0.0
