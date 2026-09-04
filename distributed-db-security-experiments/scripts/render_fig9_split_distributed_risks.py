@@ -138,18 +138,22 @@ def draw_panel_a(ax, requests: pd.DataFrame) -> None:
     data = exp1_shard_load_by_run(requests)
     if data.empty:
         ax.text(0.5, 0.5, "无数据", transform=ax.transAxes, ha="center", va="center")
-        ax.set_title("a) 单分片泛洪下的物理分片负载")
+        ax.set_title("a) 单分片泛洪模拟下的实例负载分布")
         return
+    data = data.copy()
+    data["series"] = data["series"].replace(
+        {"分片0": "实例0", "分片1": "实例1", "分片2": "实例2"}
+    )
     draw_grouped_bar_boxplot(
         ax,
         data,
         groups=["确定性路由", "混淆路由模拟", "混淆路由+流量控制"],
-        series=["分片0", "分片1", "分片2"],
-        colors={"分片0": PALETTE["red"], "分片1": PALETTE["blue"], "分片2": PALETTE["green"]},
-        title="a) 单分片泛洪下的物理分片负载",
+        series=["实例0", "实例1", "实例2"],
+        colors={"实例0": PALETTE["red"], "实例1": PALETTE["blue"], "实例2": PALETTE["green"]},
+        title="a) 单分片泛洪模拟下的实例负载分布",
         xlabel="路由/防御策略",
-        ylabel="已路由物理请求数",
-        legend_title="物理分片",
+        ylabel="各实例接收请求数",
+        legend_title="PostgreSQL实例",
         legend_loc="upper right",
         x_rotation=0,
         y_pad=0.12,
