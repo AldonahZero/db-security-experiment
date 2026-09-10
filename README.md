@@ -10,6 +10,14 @@
 
 ## Single-Database Deployment
 
+### PostgreSQL RBAC after credential compromise
+
+From `single-db-security-experiments`, with host Python 3 and `psycopg2` installed:
+
+```bash
+docker compose up -d --no-deps postgres-db && until docker compose exec -T postgres-db pg_isready -U youruser -d juiceshop_db; do sleep 1; done && python3 attack-scripts/rbac_access_control.py
+```
+
 ```bash
 cd single-db-security-experiments
 docker compose up -d

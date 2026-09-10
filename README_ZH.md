@@ -10,6 +10,14 @@
 
 ## 普通单库实验部署
 
+### PostgreSQL RBAC：凭证失陷后的权限约束
+
+在 `single-db-security-experiments` 目录执行（宿主机需 Python 3 和 `psycopg2`）：
+
+```bash
+docker compose up -d --no-deps postgres-db && until docker compose exec -T postgres-db pg_isready -U youruser -d juiceshop_db; do sleep 1; done && python3 attack-scripts/rbac_access_control.py
+```
+
 ```bash
 cd single-db-security-experiments
 docker compose up -d
